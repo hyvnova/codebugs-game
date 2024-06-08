@@ -1,0 +1,21 @@
+[gd_scene load_steps=5 format=3 uid="uid://h40o4yukp53b"]
+
+[ext_resource type="PackedScene" uid="uid://c13b5urkp2x7v" path="res://scenes/main_camera.tscn" id="2_np8oy"]
+[ext_resource type="PackedScene" uid="uid://b32jn77vkqne5" path="res://scenes/crap.tscn" id="3_tmjqe"]
+[ext_resource type="PackedScene" uid="uid://cy3pvgmleqnmt" path="res://scenes/map.tscn" id="4_2mfbg"]
+[ext_resource type="PackedScene" uid="uid://d3sueglj6n7pu" path="res://scenes/hud.tscn" id="4_q4un5"]
+
+[node name="World" type="Node2D" groups=["world"]]
+
+[node name="Map" parent="." instance=ExtResource("4_2mfbg")]
+scale = Vector2(3.009, 3)
+
+[node name="Crap" parent="." instance=ExtResource("3_tmjqe")]
+position = Vector2(15, -54)
+rotation = 0.0872665
+scale = Vector2(0.25, 0.25)
+
+[node name="MainCamera" parent="." instance=ExtResource("2_np8oy")]
+anchor_mode = 1
+
+[node name="HUD" parent="MainCamera" instance=ExtResource("4_q4un5")]

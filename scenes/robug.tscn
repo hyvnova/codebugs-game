@@ -1,0 +1,59 @@
+[gd_scene load_steps=9 format=3 uid="uid://sjuw5418o68w"]
+
+[ext_resource type="Script" path="res://scripts/robug.gd" id="1_5rjbs"]
+[ext_resource type="Texture2D" uid="uid://cvg35hkpu3fq5" path="res://assets/Tech Dungeon Roguelite - Asset Pack (DEMO)/Enemies/enemies x1.png" id="1_q3cba"]
+
+[sub_resource type="CapsuleShape2D" id="CapsuleShape2D_bjegg"]
+radius = 4.5
+height = 18.0
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_loa6s"]
+atlas = ExtResource("1_q3cba")
+region = Rect2(0, 0, 32, 32)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_ws11y"]
+atlas = ExtResource("1_q3cba")
+region = Rect2(32, 0, 32, 32)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_4w7xp"]
+atlas = ExtResource("1_q3cba")
+region = Rect2(64, 0, 32, 32)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_swlcw"]
+atlas = ExtResource("1_q3cba")
+region = Rect2(96, 0, 32, 32)
+
+[sub_resource type="SpriteFrames" id="SpriteFrames_yykqg"]
+animations = [{
+"frames": [{
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_loa6s")
+}, {
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_ws11y")
+}, {
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_4w7xp")
+}, {
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_swlcw")
+}],
+"loop": true,
+"name": &"idle",
+"speed": 4.0
+}]
+
+[node name="Robug" type="CharacterBody2D" groups=["robug"]]
+script = ExtResource("1_5rjbs")
+
+[node name="GenerousCollisionEnjoyjer" type="CollisionShape2D" parent="."]
+position = Vector2(1.5, -4)
+shape = SubResource("CapsuleShape2D_bjegg")
+
+[node name="AnimatedSprite2D" type="AnimatedSprite2D" parent="."]
+scale = Vector2(3, 3)
+sprite_frames = SubResource("SpriteFrames_yykqg")
+animation = &"idle"
+frame = 1
+frame_progress = 0.0237575
+speed_scale = 1.5

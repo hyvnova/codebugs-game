@@ -1,0 +1,40 @@
+[gd_scene load_steps=4 format=3 uid="uid://d3sueglj6n7pu"]
+
+[ext_resource type="Script" path="res://scripts/NewRobug.gd" id="2_tu038"]
+[ext_resource type="Texture2D" uid="uid://kb5rrfy03va2" path="res://assets/Tech Dungeon Roguelite - Asset Pack (DEMO)/UI/ui x2.png" id="2_wgj1q"]
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_y1pp1"]
+atlas = ExtResource("2_wgj1q")
+region = Rect2(464, 410, 32, 10)
+
+[node name="HUD" type="CanvasLayer"]
+layer = 10
+
+[node name="Energy" type="TextureRect" parent="."]
+anchors_preset = 2
+anchor_top = 1.0
+anchor_bottom = 1.0
+offset_left = 31.0
+offset_top = -67.0
+offset_right = 63.0
+offset_bottom = -57.0
+grow_vertical = 0
+scale = Vector2(3, 3)
+texture = SubResource("AtlasTexture_y1pp1")
+
+[node name="SpawnRobugBtn" type="Button" parent="."]
+anchors_preset = 7
+anchor_left = 0.5
+anchor_top = 1.0
+anchor_right = 0.5
+anchor_bottom = 1.0
+offset_left = -56.0
+offset_top = -55.0
+offset_right = 57.0
+offset_bottom = -24.0
+grow_horizontal = 2
+grow_vertical = 0
+text = "Spawn Robug"
+script = ExtResource("2_tu038")
+
+[connection signal="pressed" from="SpawnRobugBtn" to="SpawnRobugBtn" method="_on_pressed"]

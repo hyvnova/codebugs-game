@@ -1,0 +1,18 @@
+[gd_scene load_steps=3 format=3 uid="uid://b32jn77vkqne5"]
+
+[ext_resource type="Texture2D" uid="uid://b0eid3kk8oscq" path="res://assets/Hardware/celeront_0.png" id="2_iu8i2"]
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_abxj0"]
+size = Vector2(131.429, 125.714)
+
+[node name="Crap" type="Area2D" groups=["crap"]]
+scale = Vector2(0.35, 0.35)
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="."]
+position = Vector2(0, -9.53674e-07)
+scale = Vector2(0.35, 0.35)
+shape = SubResource("RectangleShape2D_abxj0")
+
+[node name="Celeront0" type="Sprite2D" parent="."]
+scale = Vector2(0.75, 0.75)
+texture = ExtResource("2_iu8i2")

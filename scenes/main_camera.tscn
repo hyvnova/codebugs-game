@@ -1,0 +1,7 @@
+[gd_scene load_steps=2 format=3 uid="uid://c13b5urkp2x7v"]
+
+[ext_resource type="Script" path="res://scripts/main_camera.gd" id="1_cnfmp"]
+
+[node name="MainCamera" type="Camera2D"]
+anchor_mode = 0
+script = ExtResource("1_cnfmp")

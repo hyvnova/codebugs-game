@@ -1,0 +1,22 @@
+[gd_scene load_steps=4 format=3 uid="uid://bl6f52diigu10"]
+
+[ext_resource type="Script" path="res://scripts/player.gd" id="2_btjev"]
+[ext_resource type="Texture2D" uid="uid://chraa7jsuuh25" path="res://assets/crosshair192.png" id="2_wrs7t"]
+
+[sub_resource type="CircleShape2D" id="CircleShape2D_kr4k2"]
+
+[node name="Player" type="Area2D"]
+position = Vector2(0, 1)
+scale = Vector2(2, 2)
+script = ExtResource("2_btjev")
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="."]
+scale = Vector2(0.4, 0.4)
+shape = SubResource("CircleShape2D_kr4k2")
+
+[node name="Crosshair" type="Sprite2D" parent="."]
+scale = Vector2(0.35, 0.35)
+texture = ExtResource("2_wrs7t")
+
+[connection signal="area_entered" from="." to="." method="_on_area_entered"]
+[connection signal="area_exited" from="." to="." method="_on_area_exited"]
