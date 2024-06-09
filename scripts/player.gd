@@ -5,7 +5,6 @@ var velocity = 0
 var initial_scale = self.scale
 var selected: Area2D # current object selected
 
-
 # Dragging / moving with mouse
 var drag_speed: int = 2
 var dragging: bool = false
@@ -13,6 +12,9 @@ var invert_axis: bool = true
 
 func wait(seconds: float) -> void:
 	await get_tree().create_timer(seconds).timeout
+
+func _ready():
+	Global.set_player_reference(self)
 
 func _input(event):
 	# Mouse dragging

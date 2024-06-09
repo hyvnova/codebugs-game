@@ -5,8 +5,13 @@ use chumsky::prelude::*;
 
 #[derive(Clone, Debug)]
 pub enum ProgramStatement { //limited code allowed in program
-    VarDef(Vec<String>,Option<String>),
-    ArrayDef(Vec<(String,Expr)>),
+    /// Variable declaration
+    /// Typeless:   var {ident};          || var {ident}, {ident}, ...;
+    /// Typed:      var {ident}: {type};  || var {ident}, {ident}, ... :{type};
+    VarDef(Vec<String>,Option<String>), 
+    
+    ArrayDef(Vec<(String,Expr)>), // Can this be done with VarDef too?
+    
     ConstDef(String,Expr),
     EnumDef(String,Vec<(String,Option<i32>)>),
     FnDef(String,Vec<FnParam>,Vec<Statement>),
@@ -14,14 +19,14 @@ pub enum ProgramStatement { //limited code allowed in program
 
 #[derive(Clone,Debug)]
 pub enum FnParam {
-    Value(String),
-    Reference(String),
+    Value(String), // {ident} I assume it can only handle identifiers for now but but Value could be an Expr
+    Reference(String), // &{ident} 
     Array(String),
 }
 
 #[derive(Clone, Debug)]
 pub enum Statement {
-    VarAssign{name:String,value:Expr}, //x=...;
+    VarAssign{name:String,value:Expr}, // {ident} = {expr};
     ArrayAssign{name:String,index:Expr,value:Expr}, //x[...]=...;
     IfElse{condition:Expr,yes:Box<Self>,no:Box<Self>}, // if ... else ...
     If{condition:Expr,yes:Box<Self>}, // if ...
@@ -36,14 +41,14 @@ pub enum Statement {
 
 #[derive(Clone, Debug)]
 pub enum Expr {
-    ArrayIndex{name:String,index:Box<Self>}, // ...[...]
-    Op{op:String,lhs:Box<Self>,rhs:Box<Self>}, // ... ... ...
-    Unary{op:String,rhs:Box<Self>}, // ... ...
-    EnumVariant{name:String,variant:String}, // ...::...
-    FnCall{name:String,args:Vec<Expr>}, // ...(...)
-    Num(i32), // ...
-    Variable(String), // ...
-    // Parens(Box<Self>), // (...)
+    ArrayIndex{name:String,index:Box<Self>}, // {identifer | array expr}[{expr}]
+    Op{op:String,lhs:Box<Self>,rhs:Box<Self>}, // {expr} {op} {expr}
+    Unary{op:String,rhs:Box<Self>}, // {op} {expr}
+    EnumVariant{name:String,variant:String}, // {expr}::{identifer}
+    FnCall{name:String,args:Vec<Expr>}, // {identfier}({expr},*)
+    Num(i32), // -1, 0, 1, ...
+    Variable(String), // ... <-- ????
+    // Parens(Box<Self>), // ({expr})
 }
 
 
