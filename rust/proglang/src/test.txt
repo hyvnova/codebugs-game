@@ -1,5 +1,2 @@
 
--x
-
-var x,y:Int;
-enum P = {A, B, C};
+fn(4,y,x[2])

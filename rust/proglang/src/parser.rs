@@ -85,21 +85,26 @@ pub fn exprparser() -> impl Parser<char, Expr, Error=Simple<char>> {
             //.map(|e| e)
             .padded();
 
-
+        let atomic = parens
+            .or(fncall)
+            .or(enumvariant)
+            .or(arrayindex)
+            .or(variable)
+            .or(int);
         
 
         let unary = op("!")
             .or(op("~"))
             .or(op("-"))
             .repeated()
-            .then(expr.clone())
+            .then(atomic.clone())
             .foldr(|op, rhs| Expr::Unary{op:op.to_string(),rhs:Box::new(rhs)})
             .padded();
 
 
         //let operator = todo!();
 
-        unary.or(parens).or(variable).or(fncall).padded()
+        unary
     });
 
     expr.then_ignore(end())
