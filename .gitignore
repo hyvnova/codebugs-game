@@ -1,5 +1,5 @@
 # Godot 4+ specific ignores
 .godot/
 
-rust/proglang/target/
-rust/**/src/target/
+rust/**/target/
+rust/**/Cargo.lock
