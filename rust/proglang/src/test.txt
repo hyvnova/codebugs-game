@@ -1,0 +1,5 @@
+
+-x
+
+var x,y:Int;
+enum P = {A, B, C};
