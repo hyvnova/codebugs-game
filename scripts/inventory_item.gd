@@ -1,11 +1,13 @@
+# This is named "InventoryItem" and not just "item" because "Item" conflicts with the built-in "Item" class in Godot.
+# Prepare youself for a bunch of inconsistencies in the code, as I was learning as I went along.
+
 @tool
 extends Node2D
 class_name InventoryItem 
 
 # Item data
-var type: String = ""
-var quantity: int = 1
-var texture: Texture
+var data: ItemData 
+@export var texture: Texture # For the editor, this is not really needed in the game
 
 const scene_path: String = "res://scenes/inventory_item.tscn"
 const scene = preload(scene_path)
@@ -16,47 +18,20 @@ const scene = preload(scene_path)
 # Variables
 var player_in_range = false
 
-
-static func new_item(type: String, texture: Texture, pos: Vector2) -> InventoryItem:
+static func new_item(data: ItemData, pos: Vector2) -> InventoryItem:
 	var ins = scene.instantiate()
-
-	# Set the items values for spawning
-	ins.type = type
-	ins.texture = texture
+	ins.data = data
 	ins.global_position = pos
-
 	return ins
 
 func _ready():
 	# Set the texture to reflect in the game
 	if not Engine.is_editor_hint():
+		icon_sprite.texture = data.texture
+	else:
 		icon_sprite.texture = texture
-
-func _process(_delta):
-	# Set the texture to reflect in the editor
-	if Engine.is_editor_hint():
-		icon_sprite.texture = texture
-		
-	# Add item to inventory if player presses "E" within range
-	if player_in_range and Input.is_action_just_pressed("use"):
-		pickup_item()
 
 # Add item to inventory
 func pickup_item():
-	if Global.player_node:
-		Global.add_item(self)
-		self.queue_free()
-
-# If player is in range, show UI and make item pickable
-func _on_area_2d_body_entered(body):
-	print("area entered")
-	if body.is_in_group("player"):
-		player_in_range = true
-		body.interact_ui.visible = true
-
-# If player is in range, hide UI and don't make item pickable
-func _on_area_2d_body_exited(body):
-	if body.is_in_group("player"):
-		player_in_range = false
-		body.interact_ui.visible = false
-		
+	Global.add_item(data)
+	self.queue_free()

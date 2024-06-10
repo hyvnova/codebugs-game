@@ -1,9 +1,10 @@
 ### Global.gd
+# ! AUTOLOADED as Global
 
 extends Node
 
 # Inventory items
-var inventory: Array[InventoryItem] = []
+var inventory: Array[ItemData] = [] # Each slot contains an InventoryItem or null. 
 
 # Custom signals
 signal inventory_updated
@@ -11,38 +12,40 @@ var spawnable_items = []
 
 # Scene and node references
 @onready var player_node: Node = Player
-@onready var inventory_slot_scene = preload("res://scenes/inventory_slot.tscn")
+
 
 func _ready(): 
 	# Initializes the inventory with 9 slots (spread over 3 blocks per row)
 	inventory.resize(10) 
 
+# on_pickup Adds an item to the inventory, returns true if successful
+func add_item(item_data: ItemData) -> bool:
 
-# Adds an item to the inventory, returns true if successful
-func add_item(item: InventoryItem) -> bool:
-
-	# TODO! This is seriously slow, we need to optimize this frfr ong
+	# TODO! This is seriously slow, need to optimize this frfr ong
 	for i in range(inventory.size()):
-		# Check if the item exists in the inventory and matches both type and effect
-		if inventory[i] and inventory[i].type == item.type:
-			inventory[i].quantity += item.quantity
+		# Check if a non-empty slot contains the same item type to stack.  
+		if inventory[i] and inventory[i].type == item_data.type:
+			inventory[i].quantity += item_data.quantity
+
+			
+				
 			inventory_updated.emit()
-			print("Item added", inventory)
+			print("Item added (stack)", inventory)
 			return true
 
 		# Add the item to the first available slot
 		elif inventory[i] == null:
-			inventory[i] = item
+			inventory[i] = item_data
 			inventory_updated.emit()
 			print("Item added", inventory)
 			return true
 
-	return false
+	return false # Could not add the item
 
-# Removes an item from the inventory based on type and effect
+# Removes an item from the inventory
 func remove_item(item_type) -> bool:
 	for i in range(inventory.size()):
-		# If the item exists in the inventory and matches the type
+		# Find item with the same type and decrease the quantity
 		if inventory[i] and inventory[i].type == item_type:
 			inventory[i].quantity -= 1
 
@@ -75,7 +78,8 @@ func adjust_drop_position(position: Vector2):
 	return position
 
 # Drops an item at a specified position, adjusting for nearby items
-func drop_item(item: InventoryItem, drop_position: Vector2):
+func drop_item(item: ItemData, drop_position: Vector2):
+	item.quantity = 1
 	drop_position = adjust_drop_position(drop_position)
-	item.global_position = drop_position
-	item.visible = true
+	World.spawn_item(item, drop_position)
+	

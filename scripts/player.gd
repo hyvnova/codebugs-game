@@ -2,7 +2,8 @@ extends Area2D
 
 @export var speed = 5
 var velocity = 0
-var initial_scale = self.scale
+var  initial_scale = self.scale
+
 var selected: InventoryItem  # current object selected
 
 func wait(seconds: float) -> void:
@@ -14,9 +15,10 @@ func _ready():
 func _input(event):
 	if event.is_action_pressed("use"):
 		print("using: ", selected)
-		if selected:
+		if selected and not selected.is_queued_for_deletion():
 			# Pickup the item
 			selected.pickup_item()
+			selected = null
 
 func _physics_process(_delta):
 	# Keyboard movement
@@ -49,12 +51,10 @@ func _on_area_exited(_area):
 func select(end_pos):
 	var tween = create_tween().set_parallel(true)
 	tween.tween_property(self, "position", end_pos, 0.10)
-	tween.tween_property(self, "rotation", 90, 0.5)
+	tween.tween_property(self, "rotation", 45, 0.5)
 	tween.tween_property(self, "scale", initial_scale * 0.85, 0.5)
-	await wait(0.5)
 
 func unselect():
 	var tween = create_tween().set_parallel(true)
 	tween.tween_property(self, "rotation", 0, 0.5)
 	tween.tween_property(self, "scale", initial_scale, 0.5)
-	await wait(0.5)

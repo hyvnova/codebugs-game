@@ -18,7 +18,7 @@ script = ExtResource("1_ybuun")
 
 [node name="GridContainer" type="GridContainer" parent="."]
 layout_mode = 1
-scale = Vector2(0.25, 0.25)
+scale = Vector2(0.4, 0.4)
 size_flags_horizontal = 3
 size_flags_vertical = 3
 theme_override_constants/h_separation = 20

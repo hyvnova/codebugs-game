@@ -17,8 +17,10 @@ config/icon="res://icon.svg"
 
 [autoload]
 
+WorldNode="*res://world.tscn"
 Global="*res://scripts/global.gd"
 Player="*res://scripts/player.gd"
+World="*res://scripts/world.gd"
 
 [display]
 

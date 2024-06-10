@@ -1,6 +1,8 @@
 ### Inventory_UI.gd
 extends Control
 
+const SLOT_SCENE = preload("res://scenes/inventory_slot.tscn")
+
 # Scene-Tree Node references
 @onready var grid_container = $GridContainer
 
@@ -9,16 +11,19 @@ func _ready():
 	Global.inventory_updated.connect(_on_inventory_updated)
 	_on_inventory_updated()
 
+# TODO! This is slow. It re-creates the entire inventory UI every time the inventory is updated.
+# * 	It should try to only update the slots that have changed.
+
 # Update inventory UI
 func _on_inventory_updated():
 	# Clear existing slots
 	clear_grid_container()
 	# Add slots for each inventory position
 	for item in Global.inventory:
-		var slot = Global.inventory_slot_scene.instantiate()
+		var slot = SLOT_SCENE.instantiate()
 		grid_container.add_child(slot)
-		if item != null:
-			item.visible = false
+
+		if item:
 			slot.set_item(item)
 		else:
 			slot.set_empty() 
