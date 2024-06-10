@@ -1,7 +1,7 @@
 
 
 use chumsky::prelude::*;
-
+use separated_by_save::separated_by_save;
 
 #[derive(Clone, Debug)]
 pub enum ProgramStatement { //limited code allowed in program
@@ -101,10 +101,65 @@ pub fn exprparser() -> impl Parser<char, Expr, Error=Simple<char>> {
             .foldr(|op, rhs| Expr::Unary{op:op.to_string(),rhs:Box::new(rhs)})
             .padded();
 
+        let product = unary.clone()
+            .then(
+                op("*").or(op("/").or(op("%")))
+                .then(unary)
+                .repeated())
+            .foldl(|lhs, (op, rhs)| Expr::Op{op:op.to_string(),lhs:Box::new(lhs), rhs:Box::new(rhs)});
 
-        //let operator = todo!();
+        let sum = product.clone()
+            .then(
+                op("+").or(op("-"))
+                .then(product)
+                .repeated())
+            .foldl(|lhs, (op, rhs)| Expr::Op{op:op.to_string(),lhs:Box::new(lhs), rhs:Box::new(rhs)});
 
-        unary
+        let shift = sum.clone()
+            .then(
+                op("<<").or(op(">>"))
+                .then(sum)
+                .repeated())
+            .foldl(|lhs, (op, rhs)| Expr::Op{op:op.to_string(),lhs:Box::new(lhs), rhs:Box::new(rhs)});
+
+        let bitprod = shift.clone()
+            .then(
+                op("&").or(op("^"))
+                .then(shift)
+                .repeated())
+            .foldl(|lhs, (op, rhs)| Expr::Op{op:op.to_string(),lhs:Box::new(lhs), rhs:Box::new(rhs)});
+
+        let bitor = bitprod.clone()
+            .then(
+                op("|")
+                .then(bitprod)
+                .repeated())
+            .foldl(|lhs, (op, rhs)| Expr::Op{op:op.to_string(),lhs:Box::new(lhs), rhs:Box::new(rhs)});
+
+        let comp = bitor.clone()
+            .then(
+                op("==").or(op("!=")).or(op(">")).or(op("<")).or(op(">=")).or(op("<="))
+                .then(bitor)
+                .repeated())
+            .foldl(|lhs, (op, rhs)| Expr::Op{op:op.to_string(),lhs:Box::new(lhs), rhs:Box::new(rhs)});
+
+        let logprod = comp.clone()
+            .then(
+                op("&&").or(op("^^"))
+                .then(comp)
+                .repeated())
+            .foldl(|lhs, (op, rhs)| Expr::Op{op:op.to_string(),lhs:Box::new(lhs), rhs:Box::new(rhs)});
+
+        let logor = logprod.clone()
+            .then(
+                op("||")
+                .then(logprod)
+                .repeated())
+            .foldl(|lhs, (op, rhs)| Expr::Op{op:op.to_string(),lhs:Box::new(lhs), rhs:Box::new(rhs)});
+
+
+        logor
+        //bitor
     });
 
     expr.then_ignore(end())
