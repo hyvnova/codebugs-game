@@ -1,2 +1,10 @@
 
-fn(4,-y,x[--2]) + 3*5 - -5 & 2 | 8
+var x,y;
+const Z = 4;
+
+x = y + Z;
+
+fn foo(a,&b,c[]) {
+    var q;
+    return a+b;
+}
