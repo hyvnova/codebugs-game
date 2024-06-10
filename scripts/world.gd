@@ -1,9 +1,16 @@
 extends Node2D
 
-# ! AUTOLOADED as World
-# yes, WorldNode it's also and autoloaded varible
+"""
+World is the medium between code and the game world.
+Anything that needs to be spawned, or added to the world, should be done through this script.
+
+World -> This script
+WorldNode -> The root node. 
+"""
+
 
 @onready var ItemLayer = WorldNode.get_node("ItemLayer")
+@onready var EntityLayer = WorldNode.get_node("EntityLayer")
 
 var rng = RandomNumberGenerator.new()
 
@@ -22,3 +29,10 @@ func _ready():
 func spawn_item(data: ItemData, pos: Vector2):
 	ItemLayer.add_child(InventoryItem.new_item(data, pos))
 	print("Spawning %sx %s" % [data.quantity, data.type]) 
+
+func spawn(entity):
+	"""
+	Adds `entity` to EntityLayer, in other words it becomes part of the world
+	"""
+	EntityLayer.add_child(entity)
+

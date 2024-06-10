@@ -34,3 +34,11 @@ func clear_grid_container():
 		var child = grid_container.get_child(0)
 		grid_container.remove_child(child)
 		child.queue_free()
+
+
+func _input(event):
+	if event.is_action_pressed("tab"):
+		self.visible = not self.visible
+
+func _on_open_inventory_btn_pressed():
+	self.visible = not self.visible

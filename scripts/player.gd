@@ -20,12 +20,24 @@ func _input(event):
 			selected.pickup_item()
 			selected = null
 
+	# Command robugs to go to player position
+	if event.is_action_pressed("accept"):
+		for robug in get_tree().get_nodes_in_group("robug"):
+			robug.go_to(self.global_position)
+
 func _physics_process(_delta):
 	# Keyboard movement
 	var input_direction = Input.get_vector("left", "right", "up", "down")
 	velocity = input_direction * speed
 	self.position.x += velocity[0]
 	self.position.y += velocity[1]
+
+	# Make sure player doesn't go out of camera bounds
+	var viewport = get_viewport().get_visible_rect()
+	var h_width = viewport.size.x / 2
+	var h_height = viewport.size.y / 2
+	self.position.x = clamp(self.position.x, viewport.position.x - h_width, viewport.position.x + h_width)
+	self.position.y = clamp(self.position.y, viewport.position.y - h_height, viewport.position.y + h_height)
 
 # Collisions
 func _on_area_entered(area: Area2D):
@@ -51,7 +63,7 @@ func _on_area_exited(_area):
 func select(end_pos):
 	var tween = create_tween().set_parallel(true)
 	tween.tween_property(self, "position", end_pos, 0.10)
-	tween.tween_property(self, "rotation", 45, 0.5)
+	tween.tween_property(self, "rotation", 90, 0.5)
 	tween.tween_property(self, "scale", initial_scale * 0.85, 0.5)
 
 func unselect():

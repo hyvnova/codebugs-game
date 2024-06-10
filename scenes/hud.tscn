@@ -1,17 +1,23 @@
-[gd_scene load_steps=5 format=3 uid="uid://d3sueglj6n7pu"]
+[gd_scene load_steps=7 format=3 uid="uid://d3sueglj6n7pu"]
 
 [ext_resource type="PackedScene" uid="uid://bxbnos3drxhfp" path="res://scenes/inventory_ui.tscn" id="1_th3nq"]
 [ext_resource type="Script" path="res://scripts/NewRobug.gd" id="2_tu038"]
 [ext_resource type="Texture2D" uid="uid://kb5rrfy03va2" path="res://assets/Tech Dungeon Roguelite - Asset Pack (DEMO)/UI/ui x2.png" id="2_wgj1q"]
+[ext_resource type="Texture2D" uid="uid://bxuwmjf4pnybm" path="res://assets/Tech Dungeon Roguelite - Asset Pack (DEMO)/UI/ui x1.png" id="4_tag8j"]
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_y1pp1"]
 atlas = ExtResource("2_wgj1q")
 region = Rect2(464, 410, 32, 10)
 
+[sub_resource type="AtlasTexture" id="AtlasTexture_dyp8k"]
+atlas = ExtResource("4_tag8j")
+region = Rect2(11, 236, 9, 9)
+
 [node name="HUD" type="CanvasLayer"]
 layer = 10
 
 [node name="InventoryUI" parent="." instance=ExtResource("1_th3nq")]
+visible = false
 
 [node name="Energy" type="TextureRect" parent="."]
 anchors_preset = 2
@@ -40,4 +46,17 @@ grow_vertical = 0
 text = "Spawn Robug"
 script = ExtResource("2_tu038")
 
+[node name="OpenInventoryBtn" type="TextureButton" parent="."]
+anchors_preset = 4
+anchor_top = 0.5
+anchor_bottom = 0.5
+offset_left = 37.0
+offset_top = 195.0
+offset_right = 46.0
+offset_bottom = 204.0
+grow_vertical = 2
+scale = Vector2(5, 5)
+texture_normal = SubResource("AtlasTexture_dyp8k")
+
 [connection signal="pressed" from="SpawnRobugBtn" to="SpawnRobugBtn" method="_on_pressed"]
+[connection signal="pressed" from="OpenInventoryBtn" to="InventoryUI" method="_on_open_inventory_btn_pressed"]
