@@ -29,7 +29,7 @@ func _input(event):
 		self.position.x += velocity[0] * mult
 		self.position.y += velocity[1] * mult
 
-func _physics_process(delta):
+func _physics_process(_delta):
 	# Keyboard movement
 	var input_direction = Input.get_vector("left", "right", "up", "down")
 	velocity = input_direction * speed
@@ -47,7 +47,7 @@ func _on_area_entered(area: Area2D):
 		# Tween self to center the collided area
 		return await select(position + offset)
 
-func _on_area_exited(area):
+func _on_area_exited(_area):
 	await unselect()
 
 # When Colliding with an object

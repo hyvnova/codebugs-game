@@ -1,5 +1,6 @@
-[gd_scene load_steps=4 format=3 uid="uid://d3sueglj6n7pu"]
+[gd_scene load_steps=5 format=3 uid="uid://d3sueglj6n7pu"]
 
+[ext_resource type="PackedScene" uid="uid://bxbnos3drxhfp" path="res://scenes/inventory_ui.tscn" id="1_th3nq"]
 [ext_resource type="Script" path="res://scripts/NewRobug.gd" id="2_tu038"]
 [ext_resource type="Texture2D" uid="uid://kb5rrfy03va2" path="res://assets/Tech Dungeon Roguelite - Asset Pack (DEMO)/UI/ui x2.png" id="2_wgj1q"]
 
@@ -9,6 +10,15 @@ region = Rect2(464, 410, 32, 10)
 
 [node name="HUD" type="CanvasLayer"]
 layer = 10
+
+[node name="InventoryUI" parent="." instance=ExtResource("1_th3nq")]
+anchors_preset = 6
+anchor_left = 1.0
+anchor_top = 0.5
+anchor_right = 1.0
+anchor_bottom = 0.5
+grow_horizontal = 0
+grow_vertical = 2
 
 [node name="Energy" type="TextureRect" parent="."]
 anchors_preset = 2

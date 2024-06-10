@@ -6,7 +6,8 @@ class_name InventoryItem
 @export var item_type = ""
 @export var item_texture: Texture
 
-const scene_path: String = "res://scripts/inventory_item.tscn"
+const scene_path: String = "res://scenes/inventory_item.tscn"
+const scene = preload(scene_path)
 
 # Scene-Tree Node references
 @onready var icon_sprite = $Sprite2D
@@ -15,14 +16,14 @@ const scene_path: String = "res://scripts/inventory_item.tscn"
 var player_in_range = false
 
 
-static func new_item(type: String, texture: Texture, position: Vector2) -> InventoryItem:
-	var ins = InventoryItem.new()
+static func new_item(type: String, texture: Texture, pos: Vector2) -> InventoryItem:
+	var ins = scene.instantiate()
 
 	# Set the items values for spawning
 	ins.item_type = type
 	ins.item_texture = texture
 
-	ins.global_position = position
+	ins.global_position = pos
 
 	return ins
 

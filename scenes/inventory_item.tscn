@@ -4,7 +4,7 @@
 
 [sub_resource type="CircleShape2D" id="CircleShape2D_m1ro3"]
 
-[node name="Inventory_Item" type="Node2D" groups=["Items"]]
+[node name="InventoryItem" type="Node2D" groups=["Items"]]
 script = ExtResource("1_ckp2a")
 
 [node name="Area2D" type="Area2D" parent="."]

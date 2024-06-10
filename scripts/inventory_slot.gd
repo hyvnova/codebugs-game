@@ -39,12 +39,7 @@ func set_item(new_item):
 	item = new_item
 	icon.texture = item["texture"] 
 	quantity_label.text = str(item["quantity"])
-	item_name.text = str(item["name"])
 	item_type.text = str(item["type"])
-	if item["effect"] != "":
-		item_effect.text = str("+ ", item["effect"])
-	else: 
-		item_effect.text = ""
 
 # Remove item from inventory and drop it back into the world        		
 func _on_drop_button_pressed():
@@ -53,15 +48,15 @@ func _on_drop_button_pressed():
 		var drop_offset = Vector2(0, 50)
 		drop_offset = drop_offset.rotated(Global.player_node.rotation)
 		Global.drop_item(item, drop_position + drop_offset)
-		Global.remove_item(item["type"], item["effect"])
+		Global.remove_item(item["type"])
 		usage_panel.visible = false
 
 # Remove item from inventory, use it, and apply its effect (if possible)		
 func _on_use_button_pressed():
 	usage_panel.visible = false
-	if item != null and item["effect"] != "":
+	if item != null:
 		if Global.player_node:
 			Global.player_node.apply_item_effect(item)
-			Global.remove_item(item["type"], item["effect"])
+			Global.remove_item(item["type"])
 		else:
 			print("Player could not be found")

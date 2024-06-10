@@ -40,3 +40,12 @@ func _input(event):
 			if zoom.x < MIN_ZOOM:
 				zoom.x = MIN_ZOOM
 				zoom.y = MIN_ZOOM
+
+	keep_childrem_centered()
+
+func keep_childrem_centered():
+	# Keep the child centered
+	var child = get_children(true)
+	if is_instance_of(child, Node2D):
+		child.position = Vector2.ZERO
+		self.position = -child.global_position + get_viewport_rect().size / 2	
