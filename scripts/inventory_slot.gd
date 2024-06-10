@@ -12,16 +12,16 @@ extends Control
 @onready var usage_panel = $UsagePanel
 
 # Slot item
-var item = null
+var item: InventoryItem = null
 
 # Show usage panel for player to use/remove item
 func _on_item_button_pressed():
-	if item != null:
+	if item:
 		usage_panel.visible = !usage_panel.visible
 
 # Show item details on hover enter
 func _on_item_button_mouse_entered():
-	if item != null:
+	if item:
 		usage_panel.visible = false
 		details_panel.visible = true
 
@@ -35,28 +35,29 @@ func set_empty():
 	quantity_label.text = ""
 
 # Set slot item with its values from the dictionary
-func set_item(new_item):
+func set_item(new_item: InventoryItem):
 	item = new_item
-	icon.texture = item["texture"] 
-	quantity_label.text = str(item["quantity"])
-	item_type.text = str(item["type"])
+	icon.texture = item.texture
+	quantity_label.text = str(item.quantity)
+	item_type.text = str(item.type)
+
 
 # Remove item from inventory and drop it back into the world        		
 func _on_drop_button_pressed():
-	if item != null:
+	if item:
 		var drop_position = Global.player_node.global_position
 		var drop_offset = Vector2(0, 50)
 		drop_offset = drop_offset.rotated(Global.player_node.rotation)
 		Global.drop_item(item, drop_position + drop_offset)
-		Global.remove_item(item["type"])
+		Global.remove_item(item.type)
 		usage_panel.visible = false
 
 # Remove item from inventory, use it, and apply its effect (if possible)		
 func _on_use_button_pressed():
 	usage_panel.visible = false
-	if item != null:
+	if item:
 		if Global.player_node:
 			Global.player_node.apply_item_effect(item)
-			Global.remove_item(item["type"])
+			Global.remove_item(item.type)
 		else:
 			print("Player could not be found")

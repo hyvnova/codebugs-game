@@ -18,11 +18,12 @@ position = Vector2(15, -54)
 rotation = 0.0872665
 scale = Vector2(0.75, 0.75)
 
+[node name="ItemLayer" type="Node2D" parent="."]
+
 [node name="MainCamera" parent="." instance=ExtResource("2_np8oy")]
+z_index = 10
 anchor_mode = 1
 
 [node name="HUD" parent="MainCamera" instance=ExtResource("4_q4un5")]
 
-[node name="ItemLayer" type="Node2D" parent="."]
-
-[node name="Player" parent="." instance=ExtResource("6_j7ckx")]
+[node name="Player" parent="MainCamera" instance=ExtResource("6_j7ckx")]

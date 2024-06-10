@@ -11,7 +11,7 @@ func _ready():
 	const texture = preload("res://assets/Hardware/asus460_0.png")
 
 	# Spawn some random ass items 
-	for i in range(10):
+	for i in range(1):
 		var item = InventoryItem.new_item("crap", texture, Player.global_position)
 
 		ItemLayer.add_child(item)

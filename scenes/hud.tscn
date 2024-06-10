@@ -12,13 +12,6 @@ region = Rect2(464, 410, 32, 10)
 layer = 10
 
 [node name="InventoryUI" parent="." instance=ExtResource("1_th3nq")]
-anchors_preset = 6
-anchor_left = 1.0
-anchor_top = 0.5
-anchor_right = 1.0
-anchor_bottom = 0.5
-grow_horizontal = 0
-grow_vertical = 2
 
 [node name="Energy" type="TextureRect" parent="."]
 anchors_preset = 2

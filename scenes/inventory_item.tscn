@@ -1,15 +1,18 @@
-[gd_scene load_steps=3 format=3 uid="uid://uvb70dywawcv"]
+[gd_scene load_steps=3 format=3 uid="uid://c4xxcyla4nrwl"]
 
 [ext_resource type="Script" path="res://scripts/inventory_item.gd" id="1_ckp2a"]
 
 [sub_resource type="CircleShape2D" id="CircleShape2D_m1ro3"]
 
-[node name="InventoryItem" type="Node2D" groups=["Items"]]
+[node name="InventoryItem" type="Node2D" groups=["item"]]
 script = ExtResource("1_ckp2a")
 
-[node name="Area2D" type="Area2D" parent="."]
+[node name="Area2D" type="Area2D" parent="." groups=["item_area"]]
+collision_layer = 3
+collision_mask = 3
 
 [node name="CollisionShape2D" type="CollisionShape2D" parent="Area2D"]
+scale = Vector2(1.5, 1.5)
 shape = SubResource("CircleShape2D_m1ro3")
 
 [node name="Sprite2D" type="Sprite2D" parent="."]

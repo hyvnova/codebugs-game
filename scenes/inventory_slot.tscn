@@ -105,12 +105,11 @@ theme_override_font_sizes/font_size = 40
 text = "Effect"
 
 [node name="UsagePanel" type="ColorRect" parent="."]
-visible = false
 layout_mode = 0
-offset_top = -135.0
+offset_top = -159.0
 offset_right = 240.0
 offset_bottom = -5.0
-color = Color(0.596078, 0.933333, 0.8, 1)
+color = Color(0.00250967, 0.0147652, 0.00905814, 1)
 
 [node name="UseButton" type="Button" parent="UsagePanel"]
 layout_mode = 1

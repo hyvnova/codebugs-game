@@ -18,6 +18,7 @@ func _on_inventory_updated():
 		var slot = Global.inventory_slot_scene.instantiate()
 		grid_container.add_child(slot)
 		if item != null:
+			item.visible = false
 			slot.set_item(item)
 		else:
 			slot.set_empty() 
