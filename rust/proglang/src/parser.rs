@@ -1,7 +1,7 @@
 
 
 use chumsky::prelude::*;
-use separated_by_save::separated_by_save;
+//use separated_by_save::separated_by_save;
 
 #[derive(Clone, Debug)]
 pub enum ProgramStatement { //limited code allowed in program
@@ -129,7 +129,7 @@ pub fn exprparser() -> impl Parser<char, Expr, Error=Simple<char>> {
                 .repeated())
             .foldl(|lhs, (op, rhs)| Expr::Op{op:op.to_string(),lhs:Box::new(lhs), rhs:Box::new(rhs)});
 
-        let bitor = bitprod.clone()
+        /*let bitor = bitprod.clone()
             .then(
                 op("|")
                 .then(bitprod)
@@ -157,9 +157,9 @@ pub fn exprparser() -> impl Parser<char, Expr, Error=Simple<char>> {
                 .repeated())
             .foldl(|lhs, (op, rhs)| Expr::Op{op:op.to_string(),lhs:Box::new(lhs), rhs:Box::new(rhs)});
 
-
-        logor
-        //bitor
+*/
+        //logor
+        bitprod
     });
 
     expr.then_ignore(end())
@@ -182,3 +182,49 @@ pub fn exprparser() -> impl Parser<char, Expr, Error=Simple<char>> {
 //         let 
 //     })
 // }
+
+
+
+// let vardef = text::keyword("var")
+//     .then_ignore(text::whitespace())
+//     .then(text::ident().padded().separated_by(just(',')).at_least(1))
+//     .then(just(':').ignore_then(text::ident()).or_not())
+//     .then_ignore(just(';'))
+//     .map(|(names,r#type)| Statement::VarDef{names,r#type})
+//     .padded();
+
+// let arraydef = text::keyword("array")
+//     .then_ignore(text::whitespace())
+//     .then(
+//         text::ident()
+//         .then_ignore(just('['))
+//         .then(expr)
+//         .then_ignore(just(']'))
+//         .padded()
+//         .separated_by(just(',')).at_least(1))
+//     .then(just(':').ignore_then(text::ident()).or_not())
+//     .then_ignore(just(';'))
+//     .map(|(arrays,r#type)| Statement::ArrayDef{arrays,r#type})
+//     .padded();
+
+// let varassign = text::ident().padded()
+//     .then_ignore(just('='))
+//     .then(expr)
+//     .then_ignore(just(';'))
+//     .map()
+//     .padded();
+
+// let arrayassign = arrayindex.clone()
+//     .then_ignore(just('='))
+//     .then(expr)
+//     .then_ignore(just(';'))
+//     .map(|((name,index),value)|Statement::ArrayAssign{name,index,value})
+//     .padded();
+
+// let codeblock = just('{')
+//     .ignore_then(
+//         statement.repeated()
+//     )
+//     .then_ignore(just('}'))
+//     .map(|statements| Statement::CodeBlock(statements))
+//     .padded();
