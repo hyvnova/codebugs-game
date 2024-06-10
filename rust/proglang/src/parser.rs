@@ -101,65 +101,63 @@ pub fn exprparser() -> impl Parser<char, Expr, Error=Simple<char>> {
             .foldr(|op, rhs| Expr::Unary{op:op.to_string(),rhs:Box::new(rhs)})
             .padded();
 
-        let product = unary.clone()
-            .then(
-                op("*").or(op("/").or(op("%")))
-                .then(unary)
-                .repeated())
-            .foldl(|lhs, (op, rhs)| Expr::Op{op:op.to_string(),lhs:Box::new(lhs), rhs:Box::new(rhs)});
+        // let product = unary.clone()
+        //     .then(
+        //         op("*").or(op("/").or(op("%")))
+        //         .then(unary)
+        //         .repeated())
+        //     .foldl(|lhs, (op, rhs)| Expr::Op{op:op.to_string(),lhs:Box::new(lhs), rhs:Box::new(rhs)});
 
-        let sum = product.clone()
-            .then(
-                op("+").or(op("-"))
-                .then(product)
-                .repeated())
-            .foldl(|lhs, (op, rhs)| Expr::Op{op:op.to_string(),lhs:Box::new(lhs), rhs:Box::new(rhs)});
+        let op_fold = |(items,ops):(Vec<Expr>,Vec<&str>)| {
+            let mut items = items.into_iter();
+            let mut e:Expr = items.next().unwrap();
+            for i in 0..ops.len() {
+                e=Expr::Op{op:ops[i].to_string(), lhs:Box::new(e), rhs:Box::new(items.next().unwrap())};
+            }
+            e
+        };
 
-        let shift = sum.clone()
-            .then(
-                op("<<").or(op(">>"))
-                .then(sum)
-                .repeated())
-            .foldl(|lhs, (op, rhs)| Expr::Op{op:op.to_string(),lhs:Box::new(lhs), rhs:Box::new(rhs)});
+        let product = unary
+            .separated_by_save(op("*").or(op("/")).or(op("%")))
+            .at_least(1)
+            .map(op_fold);
 
-        let bitprod = shift.clone()
-            .then(
-                op("&").or(op("^"))
-                .then(shift)
-                .repeated())
-            .foldl(|lhs, (op, rhs)| Expr::Op{op:op.to_string(),lhs:Box::new(lhs), rhs:Box::new(rhs)});
+        let sum = product
+            .separated_by_save(op("+").or(op("-")))
+            .at_least(1)
+            .map(op_fold);
 
-        /*let bitor = bitprod.clone()
-            .then(
-                op("|")
-                .then(bitprod)
-                .repeated())
-            .foldl(|lhs, (op, rhs)| Expr::Op{op:op.to_string(),lhs:Box::new(lhs), rhs:Box::new(rhs)});
+        let shift = sum
+            .separated_by_save(op("<<").or(op(">>")))
+            .at_least(1)
+            .map(op_fold);
 
-        let comp = bitor.clone()
-            .then(
-                op("==").or(op("!=")).or(op(">")).or(op("<")).or(op(">=")).or(op("<="))
-                .then(bitor)
-                .repeated())
-            .foldl(|lhs, (op, rhs)| Expr::Op{op:op.to_string(),lhs:Box::new(lhs), rhs:Box::new(rhs)});
+        let bitprod = shift
+            .separated_by_save(op("&").or(op("^")))
+            .at_least(1)
+            .map(op_fold);
 
-        let logprod = comp.clone()
-            .then(
-                op("&&").or(op("^^"))
-                .then(comp)
-                .repeated())
-            .foldl(|lhs, (op, rhs)| Expr::Op{op:op.to_string(),lhs:Box::new(lhs), rhs:Box::new(rhs)});
+        let bitor = bitprod
+            .separated_by_save(op("|"))
+            .at_least(1)
+            .map(op_fold);
 
-        let logor = logprod.clone()
-            .then(
-                op("||")
-                .then(logprod)
-                .repeated())
-            .foldl(|lhs, (op, rhs)| Expr::Op{op:op.to_string(),lhs:Box::new(lhs), rhs:Box::new(rhs)});
+        let comp = bitor
+            .separated_by_save(op("==").or(op("!=")).or(op(">")).or(op("<")).or(op(">=")).or(op("<=")))
+            .at_least(1)
+            .map(op_fold);
 
-*/
-        //logor
-        bitprod
+        let logprod = comp
+            .separated_by_save(op("&&").or(op("^^")))
+            .at_least(1)
+            .map(op_fold);
+
+        let logor = logprod
+            .separated_by_save(op("||"))
+            .at_least(1)
+            .map(op_fold);
+
+        logor
     });
 
     expr.then_ignore(end())

@@ -1126,7 +1126,7 @@ pub trait Parser<I: Clone, O> {
 
     /////////////////////////// CUSTOM
 
-
+    /// like [`Parser::separated_by`], excipt this returns a vector of items and a vector of delimiters
     fn separated_by_save<U, P>(self, other: P) -> SeparatedBySave<Self, P, U>
     where
         Self: Sized,
