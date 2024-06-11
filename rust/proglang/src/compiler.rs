@@ -4,6 +4,27 @@ const MAX_ARRAY_LEN:usize=512;
 
 
 
+
+#[derive(Debug)]
+enum MkInstr {
+    Instr(Instr),
+    Marker(String),
+}
+
+type X = ();
+
+#[derivE(Debug)]
+enum Instruction {
+    BinaryOperator{op:BinaryOperator,lhs:X,rhs:X,res:X},
+    UnaryOperator{op:UnaryOperator,rhs:X,res:X},
+    ArrayOperator{array:X,index:X,res:X},
+    Jump{index:usize},
+    JumpUnless{index:usize,condition:X},
+    FnCall{}
+}
+
+
+
 #[derive(Debug)]
 pub struct Identifier {
     name: String,
@@ -169,20 +190,101 @@ fn recursive_compile(&mut statements:Vec<Statement>,&mut scopes:Vec<Scope>) -> R
 
 
     // then, do the actual compilation to a format full of references (as number of variables on stack etc. and indices of functions are still uncertain)
+    for statement in statements {
+        match statement {
+            VarAssign{name,value} => {
+                // compute value
+                // assign to variable
+            }
+            ArrayAssign{name,index,value} => {} //x[...]=...;
 
+            If{condition,code} => {
+                // open up if scope
+                // add computations for computing expression
+                // add conditional jump to END of scope
+                // add instructions for code
+                // register scope data
+                // pop scope
+            }
+            IfElse{condition,yes,no} => {
+                // like if, but at end of first code jump to end of second instr
+            }
+            While{condition,code} => {
+                // open up while scope
+                // add computations for computing expression
+                // add conditional JUMP to end of scope
+                // add instructions for code
+                // add JUMP to START of while scope
+                // register scope data
+                // pop scope
 
+            }
+            Loop(code) => {
+                // open up loop scope
+                // parse code
+                // register max number of variables in scope
+                // pop loop scope
+                // add JUMP to start of current scope
+            } // loop ...
+            Break => {
+                // find nearest scope that is loop or while
+                // fail when encountering fn scope
+                // jumpt to END of scope (i.e. exactly afterwards)
+            } // break;
+            Continue => {
+                // find nearest scope that is loop or while
+                // fail when encountering fn scope
+                // loop: jump to START of that scope (i.e. first instruction after)
+                // while: jump to before computation of condition
+            }
+            Return(value) => {}
+
+            Expr(expr) => {} //just an expression not assigned to a variable (mostly function calls)
+            CodeBlock(statements) => {} // {...*}
+
+            // definitions already handled
+            VarDef => {}
+            ArrayDef => {}
+            ConstDef => {}
+            EnumDef => {}
+            
+            // compute function 
+            FnDef{name,params,code} => {
+                // determine code for function 
+                // must be appended to script after
+
+            }
+        }
+    }
 }
+
+
 
 
 pub fn compile(&mut statements:Vec<Statement>) -> Result<(),Error> {
 
+    // initialise global scope
     let mut scopes: Vec<Scope> = {
         Scope{
             name: "root",
             global: true,
             identifiers: HashMap::new(),
+            variant: ScopeVariant::Function,
         }
     };
 
-    recursive_compile(&mut statements, &mut scopes)
+    // recursively move through statements
+    let (mut code,functions) = recursive_compile(&mut statements, &mut scopes);
+
+    // add JUMP to start of program
+    code.push();
+
+    // add functions
+    code.append(functions);
+
+    // determine final values of jumps
+    todo!();
+
+    // create final code, without markers, and with valid jump values
+    todo!();
 }
