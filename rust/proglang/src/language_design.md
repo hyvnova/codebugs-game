@@ -145,12 +145,12 @@ operators, left associative with this priority:
 `||` or
 `&& ^^` and xor
 `== != >= > <= <` eq ne ge gt le lt
-`<< >>` sl sr
 `|` bitor
-`&^` bitand bitxor
+`& ^` bitand bitxor
+`<< >>` sl sr
 `+ -` add sub
 `* / %` mul div mod
-   and single:
+   and unary:
 `! - ~` not minus bitnot
 
 functioncall:
@@ -163,7 +163,47 @@ const:
 
 (all are const if inputs are const)
 
+test:
+fn(4,-y,x[--2]) + 3*5 | 6 || p::q
 
+
+
+# compilation steps
+
+make structure (parser)
+compile all functions to instructions
+    compress constants on the fly (i.e. unary and binary operators with 2 const inputs are compiled to a constant)
+        make sure that array lengths, constants, and enum types have constant lengths
+    keep track of scopes
+        for simplicity, each scope has a name prefixed by that of its parent
+            within one namespace, overriding an already used name is illegal
+            per scope, keep track of what words result in what scopes
+        references can be made to
+            variables/arrays in scopes up to first function definition (ie not past function scope)
+            variables/arrays in the global scope
+            functions in any parent scope, that may be defined afterwards as well
+                how to deal with function calls AB BA?
+                    parse all (function) definitions in a scope first
+                    fix references within scope later
+            when checking a reference
+                check current scope for fn/var/array
+                if found, return reference
+                    if not, move to parent scope
+                        when moving outside function, stop looking for var/array
+                        when entering global scope, start again
+            references can be of type:
+                var
+                    absolute or relative position on stack
+                varref (basically a pointer - is important later)
+                    absolute(?) or relative position on stack
+                array (slice)
+                arrayref
+                    absolute(?) or relative position on stack
+                fn
+                    full name
+
+    keep track of max number of temp vars (per scope -> per function)
+put all functions in a list, and fix their relative references (function call references)
 
 
 # Some CPU design that's related
