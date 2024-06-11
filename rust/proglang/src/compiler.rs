@@ -90,8 +90,19 @@ pub fn const_expr_eval(&scopes:Vec<scope>,&expr:Expr) -> Result<i32,Error> {
     }
 }
 
-pub fn find_in_scopes(&scopes: Vec<Scope>,name:String) -> Option<Identifier> {
-    todo!()
+pub fn find_in_scopes(&scopes: Vec<Scope>,name:String) -> Option<&Identifier> {
+    let mut allow_vars = true;
+    for scope in scopes.iter().rev() {
+        match scope.identifiers.get(name) {
+            Some(id@Identifier{_name,variant:IdentifierVariant::Function|IdentifierVariant::Constant|IdentifierVariant::Enum}) => {return Some(&id);}
+            Some(id) if allow_vars || scope.global => {return Some(&id);}
+            None => {}
+        }
+        // non-constants outside of current function scope and not in global scopes are not allowed
+        // so turn off after function scope
+        allow_vars = allow_vars && !matches!(scope.variant,ScopeVariant::Function);
+    }
+    None
 }
 
 
