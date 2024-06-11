@@ -1,7 +1,12 @@
 
 
 use chumsky::prelude::*;
+
+use crate::operators::{BinaryOperator as BOp,UnaryOperator as UOp};
+
 //use separated_by_save::separated_by_save;
+
+
 
 #[derive(Clone,Debug)]
 pub enum FnParam {
@@ -33,17 +38,21 @@ pub enum Statement {
     CodeBlock(Vec<Self>), // {...*}
 }
 
+
+
+
 #[derive(Clone, Debug)]
 pub enum Expr {
     ArrayIndex{name:String,index:Box<Self>}, // ...[...]
-    Op{op:String,lhs:Box<Self>,rhs:Box<Self>}, // ... ... ...
-    Unary{op:String,rhs:Box<Self>}, // ... ...
+    Op{op:BOp,lhs:Box<Self>,rhs:Box<Self>}, // ... ... ...
+    Unary{op:UOp,rhs:Box<Self>}, // ... ...
     EnumVariant{name:String,variant:String}, // ...::...
     FnCall{name:String,args:Vec<Expr>}, // ...(...)
     Num(i32), // ...
     Variable(String), // ...
     // Parens(Box<Self>), // (...)
 }
+
 
 
 pub fn parser() -> impl Parser<char, Vec<Statement>, Error=Simple<char>> {
@@ -93,12 +102,12 @@ pub fn parser() -> impl Parser<char, Vec<Statement>, Error=Simple<char>> {
                 .or(int);
             
 
-            let unary = op("!")
-                .or(op("~"))
-                .or(op("-"))
+            let unary = op("!").to(UOp::Not)
+                .or(op("~").to(UOp::BitNot))
+                .or(op("-").to(UOp::Minus))
                 .repeated()
                 .then(atomic.clone())
-                .foldr(|op, rhs| Expr::Unary{op:op.to_string(),rhs:Box::new(rhs)})
+                .foldr(|op, rhs| Expr::Unary{op,rhs:Box::new(rhs)})
                 .padded();
 
             // let product = unary.clone()
@@ -108,52 +117,59 @@ pub fn parser() -> impl Parser<char, Vec<Statement>, Error=Simple<char>> {
             //         .repeated())
             //     .foldl(|lhs, (op, rhs)| Expr::Op{op:op.to_string(),lhs:Box::new(lhs), rhs:Box::new(rhs)});
 
-            let op_fold = |(items,ops):(Vec<Expr>,Vec<&str>)| {
+            let op_fold = |(items,ops):(Vec<Expr>,Vec<BOp>)| {
                 let mut items = items.into_iter();
                 let mut e:Expr = items.next().unwrap();
                 for i in 0..ops.len() {
-                    e=Expr::Op{op:ops[i].to_string(), lhs:Box::new(e), rhs:Box::new(items.next().unwrap())};
+                    e=Expr::Op{op:ops[i], lhs:Box::new(e), rhs:Box::new(items.next().unwrap())};
                 }
                 e
             };
 
             let product = unary
-                .separated_by_save(op("*").or(op("/")).or(op("%")))
+                .separated_by_save(op("*").to(BOp::Mul).or(op("/").to(BOp::Div)).or(op("%").to(BOp::Mod)))
                 .at_least(1)
                 .map(op_fold);
 
             let sum = product
-                .separated_by_save(op("+").or(op("-")))
+                .separated_by_save(op("+").to(BOp::Add).or(op("-").to(BOp::Sub)))
                 .at_least(1)
                 .map(op_fold);
 
             let shift = sum
-                .separated_by_save(op("<<").or(op(">>")))
+                .separated_by_save(op("<<").to(BOp::LShift).or(op(">>>").to(BOp::LRShift)).or(op(">>").to(BOp::ARShift)))
                 .at_least(1)
                 .map(op_fold);
 
             let bitprod = shift
-                .separated_by_save(op("&").or(op("^")))
+                .separated_by_save(op("&").to(BOp::BitAnd).or(op("^").to(BOp::BitXor)))
                 .at_least(1)
                 .map(op_fold);
 
             let bitor = bitprod
-                .separated_by_save(op("|"))
+                .separated_by_save(op("|").to(BOp::BitOr))
                 .at_least(1)
                 .map(op_fold);
 
             let comp = bitor
-                .separated_by_save(op("==").or(op("!=")).or(op(">")).or(op("<")).or(op(">=")).or(op("<=")))
+                .separated_by_save(
+                        op("==").to(BOp::Eq)
+                    .or(op("!=").to(BOp::Neq))
+                    .or(op(">" ).to(BOp::Gt))
+                    .or(op("<" ).to(BOp::Lt))
+                    .or(op(">=").to(BOp::Ge))
+                    .or(op("<=").to(BOp::Le))
+                )
                 .at_least(1)
                 .map(op_fold);
 
             let logprod = comp
-                .separated_by_save(op("&&").or(op("^^")))
+                .separated_by_save(op("&&").to(BOp::And).or(op("^^").to(BOp::Xor)))
                 .at_least(1)
                 .map(op_fold);
 
             let logor = logprod
-                .separated_by_save(op("||"))
+                .separated_by_save(op("||").to(BOp::Or))
                 .at_least(1)
                 .map(op_fold);
 
@@ -313,21 +329,3 @@ pub fn parser() -> impl Parser<char, Vec<Statement>, Error=Simple<char>> {
 
     statement.repeated().then_ignore(end())
 }
-
-// fn parser() -> impl Parser<char, Vec<CodeBlock>, Error=Simple<char>> {
-
-//     let int = text::int(10)
-//         .map(|s: String| Expr::Num(s.parse().unwrap()))
-//         .padded();
-
-
-
-//     recursive(|code| {
-//         let digits = text::digits(10).to_slice();
-//         let number = just('-')
-//                     .or_not()
-//                     .then();
-//         let identifier = todo!(); //[A-Za-z][A-Za-z_0-9]* not part of "if else "
-//         let 
-//     })
-// }
