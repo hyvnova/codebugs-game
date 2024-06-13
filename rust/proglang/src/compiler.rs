@@ -30,12 +30,20 @@ pub enum Instr<L> {
 }
 
 impl Instr<String> {
-    fn fill_marker(self,markers:HashMap<String,usize>) -> Instr<usize> {
+    fn fill_marker(self,markers:&HashMap<String,usize>) -> Instr<usize> {
         match self {
-            Instr::Jump{index} => Instr::Jump{index:markers.get(&index).unwrap()},
-            i@Instr::JumpUnless{index,..} => Instr::JumpUnless{index:markers.get(&index).unwrap(),..i},
-            i@Instr::FnCall{index,..} => Instr::FnCall{index:markers.get(&index).unwrap(),..i},
-            i => i as Instr<usize>,
+            Instr::Jump{index} => Instr::Jump{index:*markers.get(&index).unwrap()},
+            Instr::JumpUnless{index,condition} => Instr::JumpUnless{index:*markers.get(&index).unwrap(),condition},
+            Instr::FnCall{index,params,res,stack} => Instr::FnCall{index:*markers.get(&index).unwrap(),params,res,stack:todo!()},
+
+            Instr::Return { stack } => Instr::Return { stack: todo!() }, // get stack size of function by name
+
+            //i => i as Instr<usize>,
+            Instr::ArrayAssign { array, index, value } => Instr::ArrayAssign { array, index, value },
+            Instr::ArrayIndex { array, index, res } => Instr::ArrayIndex { array, index, res },
+            Instr::BinaryOperator { op, lhs, rhs, res } => Instr::BinaryOperator { op, lhs, rhs, res },
+            Instr::SystemCall {  } => Instr::SystemCall {  },
+            Instr::UnaryOperator { op, rhs, res } => Instr::UnaryOperator { op, rhs, res },
         }
     }
 }
@@ -113,12 +121,12 @@ pub enum ScopeVariant {
 impl ScopeVariant {
     fn prefix(&self) -> String {
         ("@".to_owned()+match self {
-            If => "if",
-            IfElse => "ifelse",
-            While => "while",
-            Loop => "loop",
-            Function => "fn",
-            Block => "blk",
+            Self::If => "if",
+            Self::IfElse => "ifelse",
+            Self::While => "while",
+            Self::Loop => "loop",
+            Self::Function => "fn",
+            Self::Block => "blk",
         }+"_").to_string()
     }
 }
@@ -137,11 +145,11 @@ pub struct Scope {
 impl Scope {
     /// Insert identifier into scope
     pub fn insert(&mut self, name: String, variant:IdentifierVariant) -> Result<(),Error> {
-        let prev = self.identifiers.insert(name,Identifier{
-            name: self.name+"::"+&name,
+        let prev = self.identifiers.insert(name.clone(),Identifier{
+            name: format!("{}::{}",self.name,name),
             variant: variant,
         });
-        if let Some(id) = prev {
+        if prev.is_some() {
             Err(format!("Identifier {name} already in use: {prev:?}"))
         } else {Ok(())}
     }
@@ -149,7 +157,7 @@ impl Scope {
     pub fn create_sub(&self, name: String, variant:ScopeVariant) -> Self {
         Self {
             name: format!("{}::{}{}",self.name,variant.prefix(),name).to_string(),
-            global: false,
+            global: self.global, //TODO: should this be allowed? or should only the absolute root level scope be global?
             identifiers: HashMap::new(),
             variant: variant,
             temp_vars: Vec::new(),
@@ -224,9 +232,9 @@ pub fn reduce_const(scopes:&Vec<Scope>,expr:&Expr)-> Result<Expr,Error> {
         Expr::Op{op,lhs,rhs} => {
             let lhs = reduce_const(scopes,lhs)?;
             let rhs = reduce_const(scopes,rhs)?;
-            if let Expr::Num(x) = lhs {todo!()}
-            Ok(if let (Expr::Num(x),Expr::Num(y)) = (lhs,rhs) {
-                Expr::Num(op.eval(x,y)?)
+
+            Ok(if let (Expr::Num(x),Expr::Num(y)) = (&lhs,&rhs) {
+                Expr::Num(op.eval(*x,*y)?)
             } else {
                 Expr::Op{op:*op,lhs:Box::new(lhs),rhs:Box::new(rhs)}
             })
@@ -390,7 +398,7 @@ fn calc_expression(
         if let Some(r) = reg {
             (r,None)
         } else {
-            let tv=scopes.last().unwrap().get_temp();
+            let tv=scopes.last_mut().unwrap().get_temp();
             (Reg::Var(StackRef::Rel(-(tv as i32))),Some(tv))
         }
     }
@@ -423,8 +431,8 @@ fn calc_expression(
         Expr::Op{op,lhs,rhs} => {
             let (mut instr_lhs,reg_lhs,tmp_lhs) = calc_expression(scopes,lhs,None)?;
             let (mut instr_rhs,reg_rhs,tmp_rhs) = calc_expression(scopes,rhs,None)?;
-            if let Some(tv)=tmp_rhs {scopes.last().unwrap().release_temp(tv);}
-            if let Some(tv)=tmp_lhs {scopes.last().unwrap().release_temp(tv);}
+            if let Some(tv)=tmp_rhs {scopes.last_mut().unwrap().release_temp(tv);}
+            if let Some(tv)=tmp_lhs {scopes.last_mut().unwrap().release_temp(tv);}
             
             let (reg,tv) = get_reg(scopes,reg);
 
@@ -436,7 +444,7 @@ fn calc_expression(
         },
         Expr::Unary{op,rhs} => {
             let (mut instr,reg_rhs,tmp_rhs) = calc_expression(scopes,rhs,None)?;
-            if let Some(tv)=tmp_rhs {scopes.last().unwrap().release_temp(tv);}
+            if let Some(tv)=tmp_rhs {scopes.last_mut().unwrap().release_temp(tv);}
             
             let (reg,tv) = get_reg(scopes,reg);
         
@@ -446,7 +454,7 @@ fn calc_expression(
         Expr::ArrayIndex{name,index} => {
             // compute index, add indexing instr
             let (mut instr,reg_index,tmp_index) = calc_expression(scopes,index,None)?;
-            if let Some(tv)=tmp_index {scopes.last().unwrap().release_temp(tv);}
+            if let Some(tv)=tmp_index {scopes.last_mut().unwrap().release_temp(tv);}
             
             let (reg,tv) = get_reg(scopes,reg);
 
@@ -474,9 +482,10 @@ fn calc_expression(
 
 
 
-fn recursive_compile(mut statements:Vec<Statement>,&mut scopes:Vec<Scope>) -> Result<(Vec<MkInstr>,Vec<MkInstr>),Error> {
+fn recursive_compile(mut statements:Vec<Statement>,scopes:&mut Vec<Scope>) -> Result<(Vec<MkInstr>,Vec<MkInstr>),Error> {
 
     let mut instr:Vec<MkInstr> = Vec::new();
+    let mut functions:Vec<MkInstr> = Vec::new(); //for functions placed after this one
 
     // first, register all elements in the current scope
     // should we do this? just functions maybe?
@@ -484,17 +493,17 @@ fn recursive_compile(mut statements:Vec<Statement>,&mut scopes:Vec<Scope>) -> Re
         match statement {
             Statement::VarDef{vars,r#type} => {
                 // put variables into top scope
-                let mut scope = scopes.last_mut();
-                for name in names {
+                let mut scope = scopes.last_mut().unwrap();
+                for name in vars {
                     scope.insert(
-                        name,
+                        name.clone(),
                         IdentifierVariant::Variable{
-                            r#type,
+                            r#type:r#type.clone(),
                             reg:Reg::Var(
                                 if scope.global {
-                                    StackRef::Absolute(todo!()) // depends on stack size of main program, which is unknown - maybe take abs0!=stack0... temporarily? fix them later? is ugly but oh well I suppose it needs to be done
+                                    StackRef::Abs(todo!()) // depends on stack size of main program, which is unknown - maybe take abs0!=stack0... temporarily? fix them later? is ugly but oh well I suppose it needs to be done
                                 } else {
-                                    StackRef::Relative(-(scope.variables as usize))
+                                    StackRef::Rel(-(scope.variables as i32))
                                 }
                             )
                         }
@@ -507,20 +516,21 @@ fn recursive_compile(mut statements:Vec<Statement>,&mut scopes:Vec<Scope>) -> Re
                 // put arrays into top scope
                 for (name,size) in arrays {
                     let size = const_expr_eval(&scopes, &size)?;
-                    let mut scope = scopes.last_mut();
+                    let mut scope = scopes.last_mut().unwrap();
                     if size<0 || size as usize > MAX_ARRAY_LEN {
-                        return Err(format!("Array length {size} for array {name} in scope {scope.name} invalid"));
+                        return Err(format!("Array length {size} for array {name} in scope {} invalid",scope.name));
                     }
+                    let size = size as usize;
                     scope.insert(
-                        name,
+                        name.clone(),
                         IdentifierVariant::Array{
-                            r#type,
-                            size,
+                            r#type:r#type.clone(),
+                            size:size,
                             reg:Reg::Array(
                                 if scope.global {
-
+                                    StackRef::Abs(todo!())
                                 } else {
-                                    StackRef::Relative(-(scope.variables+size-1))
+                                    StackRef::Abs(-((scope.variables+size-1) as i32))
                                 },
                                 size
                             )
@@ -532,32 +542,34 @@ fn recursive_compile(mut statements:Vec<Statement>,&mut scopes:Vec<Scope>) -> Re
             }
             Statement::FnDef{name,params,code} => {
                 // put function name and parameters into top scope
-                scopes.last_mut().unwrap().insert(name, IdentifierVariant::Function{params})?;
+                scopes.last_mut().unwrap().insert(
+                    name.clone(), 
+                    IdentifierVariant::Function{params:params.clone()}
+                )?;
             }
             Statement::ConstDef{name,value} => {
                 // put const into top scope
                 // constants are evaluated NOW so they can only use constants that were defined previously
+                let value = const_expr_eval(scopes,&value)?;
                 scopes.last_mut().unwrap().insert(
-                    name,
-                    IdentifierVariant::Constant{
-                        value:const_expr_eval(&scopes,&value)?
-                    }
+                    name.clone(),
+                    IdentifierVariant::Constant{value}
                 )?;
             }
             Statement::EnumDef{name,variants} => {
                 // enums
                 // note that multiple enum variants may have the same value, but not name
                 // they essentially act as bundled constants
-                let mut counted_variants = HashMap::new();
+                let mut counted_variants:HashMap<String,i32> = HashMap::new();
                 let mut i:i32=-1;
-                for (variant,value) in variants.iter() {
-                    i = match value {Some(v)=>v,_=>i+1};
-                    let old = counted_variants.insert(variant,i);
-                    if let Some(_) = old {return Err(format!("Enum variant {variant} of enum {name} in scope {scopes.last().unwrap().name} is already defined"));}
+                for (variant,value) in variants.into_iter() {
+                    i = match value {Some(v)=>const_expr_eval(scopes,&v)?, _=>i+1};
+                    let old = counted_variants.insert(variant.clone(),i);
+                    if let Some(_) = old {return Err(format!("Enum variant {variant} of enum {name} in scope {} is already defined",scopes.last().unwrap().name));}
                 }
                 // put enum into top scope
                 scopes.last_mut().unwrap().insert(
-                    name,
+                    name.clone(),
                     IdentifierVariant::Enum{
                         variants:counted_variants
                     }
@@ -572,30 +584,30 @@ fn recursive_compile(mut statements:Vec<Statement>,&mut scopes:Vec<Scope>) -> Re
 
 
     // then, do the actual compilation to a format full of references (as number of variables on stack etc. and indices of functions are still uncertain)
-    for statement in statements.iter() {
+    for statement in statements.into_iter() {
         match statement {
-            VarAssign{name,value} => {
-                let value = reduce_const(scopes,value)?;
+            Statement::VarAssign{name,value} => {
+                let value = reduce_const(scopes,&value)?;
                 // compute value
                 // assign to variable
-                let var = match find_in_scopes(scopes,name) {
-                    Some(Identifier{_name,variant:IdentifierVariant::Variable}) => {
-                        todo!() // sth sth _name?
+                let reg = match find_in_scopes(scopes,&name) {
+                    Some(Identifier{variant:IdentifierVariant::Variable{reg,..},..}) => {
+                        reg
                     }
-                    _ => return Err("{name} does not name a variable in scope {scopes.last().unwrap().name}"),
+                    _ => return Err(format!("{name} does not name a variable in scope {}",scopes.last().unwrap().name)),
                 };
                 todo!();
                 let mut occupied = scopes.last().unwrap().variables;
 //                instr.append(calc_expression(scopes,occupied,value,var));
             }
-            ArrayAssign{name,index,value} => {
+            Statement::ArrayAssign{name,index,value} => {
                 // compute index
                 // compute value
                 // assign to array
                 todo!();
             }
 
-            If{condition,code} => {
+            Statement::If{condition,code} => {
                 let condition = reduce_const(&scopes,&condition);
                 // open up if scope
                 // add computations for computing expression
@@ -605,12 +617,12 @@ fn recursive_compile(mut statements:Vec<Statement>,&mut scopes:Vec<Scope>) -> Re
                 // pop scope
                 todo!();
             }
-            IfElse{condition,yes,no} => {
-                let condition = reduce_const(scopes,condition);
+            Statement::IfElse{condition,yes,no} => {
+                let condition = reduce_const(scopes,&condition);
                 // like if, but at end of first code jump to end of second instr
                 todo!();
             }
-            While{condition,code} => {
+            Statement::While{condition,code} => {
                 // open up while scope
                 // add computations for computing expression
                 // add conditional JUMP to end of scope
@@ -620,7 +632,7 @@ fn recursive_compile(mut statements:Vec<Statement>,&mut scopes:Vec<Scope>) -> Re
                 // pop scope
                 todo!();
             }
-            Loop(code) => {
+            Statement::Loop(code) => {
                 // open up loop scope
                 // parse code
                 // register max number of variables in scope
@@ -628,26 +640,26 @@ fn recursive_compile(mut statements:Vec<Statement>,&mut scopes:Vec<Scope>) -> Re
                 // add JUMP to start of current scope
                 todo!();
             }
-            Break => {
+            Statement::Break => {
                 // find nearest scope that is loop or while
                 // fail when encountering fn scope
                 // jumpt to END of scope (i.e. exactly afterwards)
                 todo!();
             }
-            Continue => {
+            Statement::Continue => {
                 // find nearest scope that is loop or while
                 // fail when encountering fn scope
                 // loop: jump to START of that scope (i.e. first instruction after)
                 // while: jump to before computation of condition
                 todo!();
             }
-            Return(value) => {
+            Statement::Return(value) => {
                 // find parent fn scope
                 // return (value, parent_fn) if it is not global!!!
                 todo!();
             }
 
-            Expr(expr) => {
+            Statement::Expr(expr) => {
                 // just an expression not assigned to a variable (mostly function calls)
                 // basically the same as variable assignment
                 // but use fake target address
@@ -656,7 +668,7 @@ fn recursive_compile(mut statements:Vec<Statement>,&mut scopes:Vec<Scope>) -> Re
                 //calc_expression(scopes,,,Reg::Const(0));
             }
 
-            CodeBlock(statements) => {
+            Statement::CodeBlock(statements) => {
                 // create scope
                 // parse things in block
                 // register scope
@@ -671,7 +683,7 @@ fn recursive_compile(mut statements:Vec<Statement>,&mut scopes:Vec<Scope>) -> Re
             EnumDef => {}
             
             // compute function 
-            FnDef{name,params,code} => {
+            Statement::FnDef{name,params,code} => {
                 // determine code for function 
                 // must be appended to script after
                 todo!();
@@ -683,60 +695,67 @@ fn recursive_compile(mut statements:Vec<Statement>,&mut scopes:Vec<Scope>) -> Re
     }
 
 
-    // if this is a function and NOT root (global), add a return statement
-    if let ScopeVariant::Function = scopes.last().unwrap().variant && !scopes.last().unwrap().global {
-        instr.push(MkInstr::Instr(Instr::Return{..}));
-        todo!();
+    // if this is a function, and if it does not already end on a return statement, and it is not the global scope, add a return statement
+    if matches!(scopes.last().unwrap().variant,ScopeVariant::Function{..}) && !scopes.last().unwrap().global{
+        if !matches!(
+            instr.iter().rev().filter(|mki| matches!(mki,MkInstr::Instr(_))).next(),
+            Some(MkInstr::Instr(Instr::Return{..}))
+        ) { //last instr (not marker!) is not a Return statement
+            instr.push(MkInstr::Instr(Instr::Return{stack:todo!()}));
+        }
     }
     
     // return stuff
-    instr
+    Ok((instr,functions))
 }
 
 
 
 
-pub fn compile(&mut statements:Vec<Statement>) -> Result<Vec<Instr<usize>>,Error> {
+pub fn compile(statements:Vec<Statement>) -> Result<Vec<Instr<usize>>,Error> {
 
     // initialise global scope
-    let mut scopes: Vec<Scope> = {
+    let mut scopes: Vec<Scope> = vec![
         Scope{
-            name: "root",
+            name: "@root".to_string(),
             global: true,
             identifiers: HashMap::new(),
             variant: ScopeVariant::Function,
+            temp_vars: Vec::new(),
+            variables: 2, //PC and ref dump
+            max_variables: 2,
         }
-    };
+    ];
 
     // recursively move through statements
-    let (mut code,functions) = recursive_compile(&mut statements, &mut scopes)?;
+    let (mut code,mut functions) = recursive_compile(statements, &mut scopes)?;
 
     // add JUMP to start of program (reboot after main has finished)
-    code.push(MkInstr(Instr::Jump("root.START")));
+    code.push(MkInstr::Instr(Instr::Jump{index:"@root.START".to_string()}));
 
     // add functions
-    code.append(functions);
+    code.append(&mut functions);
 
     // determine final values of jumps
     let mut markers:HashMap<String,usize> = HashMap::new();
-    markers.insert("root.START",0);
+    markers.insert("@root.START".to_string(),0);
 
-    let i:usize = 0;
-    for mkinstr in instr {
+    let mut i:usize = 0;
+    for mkinstr in code.iter() {
         match mkinstr {
-            Marker(m) => markers.insert(m,i),
-            Instr(_) => {i+=1;}
+            MkInstr::Marker(m) => {markers.insert(m.clone(),i);}
+            MkInstr::Instr(_) => {i+=1;}
         }
     }
 
     // create final code, without markers, and with valid jump values
-    code
+    Ok(code
         .into_iter()
         .filter_map(|mki|
             match mki {
-                MkInstr::Marker() => None,
-                MkInstr::Instr(i) => Some(i.fill_marks(&markers)),
+                MkInstr::Marker(_) => None,
+                MkInstr::Instr(i) => Some(i.fill_marker(&markers)),
             })
-        .collect()
+        .collect())
         
 }
