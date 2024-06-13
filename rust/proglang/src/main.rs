@@ -2,6 +2,7 @@
 
 mod parser;
 mod operators;
+mod compiler;
 //mod separated_by_save;
 
 use parser::parser;

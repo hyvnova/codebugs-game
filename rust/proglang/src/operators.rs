@@ -12,7 +12,7 @@ pub enum BinaryOperator {
 
 #[derive(Clone,Copy,Debug)]
 pub enum UnaryOperator {
-    Minus,Not,BitNot,
+    Minus,Not,BitNot,Nop
 }
 
 type Error = String;
@@ -53,6 +53,7 @@ impl UnaryOperator {
             UO::Minus =>    -x,
             UO::BitNot =>   !x,
             UO::Not =>      (x!=0) as i32,
+            UO::Nop =>      x,
         }
     }
 }
