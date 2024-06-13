@@ -136,7 +136,7 @@ pub struct Scope {
     global: bool,
     identifiers: HashMap<String,Identifier>,
     variant: ScopeVariant,
-    temp_vars: Vec<usize>,
+    tmp_vars: Vec<usize>,
     variables: usize,
     max_variables: usize,
 }
@@ -160,9 +160,9 @@ impl Scope {
             global: self.global, //TODO: should this be allowed? or should only the absolute root level scope be global?
             identifiers: HashMap::new(),
             variant: variant,
-            temp_vars: Vec::new(),
-            variables: self.variables-self.temp_vars.len(),// TODO: check if this works (this would mean a scope cannot be opened while temp vars are in use, as their use is non-linear)
-            max_variables: self.variables-self.temp_vars.len(),
+            tmp_vars: Vec::new(),
+            variables: self.variables-self.tmp_vars.len(),// TODO: check if this works (this would mean a scope cannot be opened while temp vars are in use, as their use is non-linear)
+            max_variables: self.variables-self.tmp_vars.len(),
         }
     }
     /// create function scope
@@ -175,9 +175,9 @@ impl Scope {
     /// create temporary variable
     /// if previously used tempvars are available, use those (pop)
     /// else, increase the number of temp vars used and create new one
-    pub fn get_temp(&mut self) -> usize {
-        if self.temp_vars.len()!=0 {
-            return self.temp_vars.pop().unwrap();
+    pub fn get_tmp(&mut self) -> usize {
+        if self.tmp_vars.len()!=0 {
+            return self.tmp_vars.pop().unwrap();
         } else {
             let tv = self.variables;
             self.variables+=1;
@@ -185,8 +185,8 @@ impl Scope {
             tv
         }
     }
-    pub fn release_temp(&mut self, tv:usize) {
-        self.temp_vars.push(tv);
+    pub fn release_tmp(&mut self, tv:usize) {
+        self.tmp_vars.push(tv);
     }
 }
 
@@ -398,7 +398,7 @@ fn calc_expression(
         if let Some(r) = reg {
             (r,None)
         } else {
-            let tv=scopes.last_mut().unwrap().get_temp();
+            let tv=scopes.last_mut().unwrap().get_tmp();
             (Reg::Var(StackRef::Rel(-(tv as i32))),Some(tv))
         }
     }
@@ -429,10 +429,10 @@ fn calc_expression(
             }
         }
         Expr::Op{op,lhs,rhs} => {
-            let (mut instr_lhs,reg_lhs,tmp_lhs) = calc_expression(scopes,lhs,None)?;
+            let (    instr_lhs,reg_lhs,tmp_lhs) = calc_expression(scopes,lhs,None)?;
             let (mut instr_rhs,reg_rhs,tmp_rhs) = calc_expression(scopes,rhs,None)?;
-            if let Some(tv)=tmp_rhs {scopes.last_mut().unwrap().release_temp(tv);}
-            if let Some(tv)=tmp_lhs {scopes.last_mut().unwrap().release_temp(tv);}
+            if let Some(tv)=tmp_rhs {scopes.last_mut().unwrap().release_tmp(tv);}
+            if let Some(tv)=tmp_lhs {scopes.last_mut().unwrap().release_tmp(tv);}
             
             let (reg,tv) = get_reg(scopes,reg);
 
@@ -444,7 +444,7 @@ fn calc_expression(
         },
         Expr::Unary{op,rhs} => {
             let (mut instr,reg_rhs,tmp_rhs) = calc_expression(scopes,rhs,None)?;
-            if let Some(tv)=tmp_rhs {scopes.last_mut().unwrap().release_temp(tv);}
+            if let Some(tv)=tmp_rhs {scopes.last_mut().unwrap().release_tmp(tv);}
             
             let (reg,tv) = get_reg(scopes,reg);
         
@@ -454,7 +454,7 @@ fn calc_expression(
         Expr::ArrayIndex{name,index} => {
             // compute index, add indexing instr
             let (mut instr,reg_index,tmp_index) = calc_expression(scopes,index,None)?;
-            if let Some(tv)=tmp_index {scopes.last_mut().unwrap().release_temp(tv);}
+            if let Some(tv)=tmp_index {scopes.last_mut().unwrap().release_tmp(tv);}
             
             let (reg,tv) = get_reg(scopes,reg);
 
@@ -482,7 +482,7 @@ fn calc_expression(
 
 
 
-fn recursive_compile(mut statements:Vec<Statement>,scopes:&mut Vec<Scope>) -> Result<(Vec<MkInstr>,Vec<MkInstr>),Error> {
+fn recursive_compile(statements:Vec<Statement>,scopes:&mut Vec<Scope>) -> Result<(Vec<MkInstr>,Vec<MkInstr>),Error> {
 
     let mut instr:Vec<MkInstr> = Vec::new();
     let mut functions:Vec<MkInstr> = Vec::new(); //for functions placed after this one
@@ -493,7 +493,7 @@ fn recursive_compile(mut statements:Vec<Statement>,scopes:&mut Vec<Scope>) -> Re
         match statement {
             Statement::VarDef{vars,r#type} => {
                 // put variables into top scope
-                let mut scope = scopes.last_mut().unwrap();
+                let scope = scopes.last_mut().unwrap();
                 for name in vars {
                     scope.insert(
                         name.clone(),
@@ -516,7 +516,7 @@ fn recursive_compile(mut statements:Vec<Statement>,scopes:&mut Vec<Scope>) -> Re
                 // put arrays into top scope
                 for (name,size) in arrays {
                     let size = const_expr_eval(&scopes, &size)?;
-                    let mut scope = scopes.last_mut().unwrap();
+                    let scope = scopes.last_mut().unwrap();
                     if size<0 || size as usize > MAX_ARRAY_LEN {
                         return Err(format!("Array length {size} for array {name} in scope {} invalid",scope.name));
                     }
@@ -540,7 +540,7 @@ fn recursive_compile(mut statements:Vec<Statement>,scopes:&mut Vec<Scope>) -> Re
                     scope.max_variables += size;
                 }
             }
-            Statement::FnDef{name,params,code} => {
+            Statement::FnDef{name,params,..} => {
                 // put function name and parameters into top scope
                 scopes.last_mut().unwrap().insert(
                     name.clone(), 
@@ -677,10 +677,10 @@ fn recursive_compile(mut statements:Vec<Statement>,scopes:&mut Vec<Scope>) -> Re
             }
 
             // definitions already handled
-            VarDef => {}
-            ArrayDef => {}
-            ConstDef => {}
-            EnumDef => {}
+            Statement::VarDef{..} => {}
+            Statement::ArrayDef{..} => {}
+            Statement::ConstDef{..} => {}
+            Statement::EnumDef{..} => {}
             
             // compute function 
             Statement::FnDef{name,params,code} => {
@@ -721,7 +721,7 @@ pub fn compile(statements:Vec<Statement>) -> Result<Vec<Instr<usize>>,Error> {
             global: true,
             identifiers: HashMap::new(),
             variant: ScopeVariant::Function,
-            temp_vars: Vec::new(),
+            tmp_vars: Vec::new(),
             variables: 2, //PC and ref dump
             max_variables: 2,
         }
