@@ -8,6 +8,15 @@ const MAX_ARRAY_LEN:usize=512;
 type Error = String;
 
 
+#[derive(Debug,Clone)]
+pub struct FnArg {
+    reg:Reg,
+    mode:FnArgMode,
+}
+#[derive(Debug,Clone)]
+pub enum FnArgMode {Value,Reference}
+
+
 #[derive(Debug)]
 enum MkInstr {
     Instr(Instr<String>),
@@ -24,7 +33,7 @@ pub enum Instr<L> {
     ArrayAssign{array:Reg,index:Reg,value:Reg},
     Jump{index:L},
     JumpUnless{index:L,condition:Reg},
-    FnCall{index:L, params:Vec<Reg>, res:Reg, stack:L},
+    FnCall{index:L, params:Vec<FnArg>, res:Reg, stack:L},
     SystemCall{}, //todo
     Return{stack:L},
 }
@@ -57,6 +66,28 @@ pub enum Reg {
     ArrayRef(StackRef), //.... the array pointed to by this place
 }
 
+/*
+
+get value:
+    const(x)    x
+    var(a)      mem[a]
+    varref(a)   mem[mem[a]]
+    array(a,n)  mem[a:+n]
+    arref(a)    mem[mem[a]:+n]
+
+set value:
+    const(x)    does nothing
+    *           see GET
+
+get reference:
+    const(x)    impossible
+    var(a)      a
+    varref(a)   mem[a]
+    array(a,n)  (a,n)
+    arref(a)    mem[a].split()
+
+*/
+
 #[derive(Debug, Clone, Copy)]
 pub enum StackRef {
     Rel(i32), // relative to top of stack
@@ -82,17 +113,17 @@ pub enum IdentifierVariant {
         r#type:Option<String>,
         reg:Reg,
     },
-    VariableRef{
-        reg:Reg,
-    },
+    // VariableRef{
+    //     reg:Reg,
+    // },
     Array{
         r#type:Option<String>,
         size:usize,
         reg:Reg,
     },
-    ArrayRef{
-        reg:Reg,
-    },
+    // ArrayRef{
+    //     reg:Reg,
+    // },
     Function{
         params:Vec<FnParam>
     },
@@ -251,7 +282,7 @@ pub fn reduce_const(scopes:&Vec<Scope>,expr:&Expr)-> Result<Expr,Error> {
             match find_in_scopes(scopes,name) {
                 Some(Identifier{variant:IdentifierVariant::Constant{value},..}) => Ok(Expr::Num(*value)),
                 Some(Identifier{variant:IdentifierVariant::Variable{..},..}) => Ok(Expr::Variable(name.clone())),
-                Some(Identifier{variant:IdentifierVariant::VariableRef{..},..}) => Ok(Expr::Variable(name.clone())),
+                // Some(Identifier{variant:IdentifierVariant::VariableRef{..},..}) => Ok(Expr::Variable(name.clone())),
                 _ => Err(format!("{name} does not name a variable or constant in scope {}",scopes.last().unwrap().name)),
             }
         }
@@ -268,15 +299,15 @@ pub fn reduce_const(scopes:&Vec<Scope>,expr:&Expr)-> Result<Expr,Error> {
         }
         Expr::ArrayIndex{name,index} => {
             match find_in_scopes(&scopes,name) {
-                Some(Identifier{variant:IdentifierVariant::Array{..}|IdentifierVariant::ArrayRef{..},..}) => 
+                Some(Identifier{variant:IdentifierVariant::Array{..}|IdentifierVariant::Array{..},..}) => 
                     Ok(Expr::ArrayIndex{name:name.clone(),index:Box::new(reduce_const(scopes,index)?)}),
                 _ => Err(format!("{name} does not name an array in scope {}",scopes.last().unwrap().name)),
             }
         },
         Expr::FnCall{name,args} => {
             match find_in_scopes(&scopes,name) {
-                Some(Identifier{variant:IdentifierVariant::Function{..},..}) => 
-                    Ok(Expr::FnCall{name:name.clone(),args:args.iter().map(|arg| reduce_const(scopes,arg)).collect::<Result<Vec<_>,_>>()?}),
+                Some(Identifier{variant:IdentifierVariant::Function{..},..}) => // TODO: only compile arguments that are of VALUE type
+                    todo!()+Ok(Expr::FnCall{name:name.clone(),args:args.iter().map(|arg| reduce_const(scopes,arg)).collect::<Result<Vec<_>,_>>()?}),
                 _ => Err(format!("{name} does not name a function in scope {}",scopes.last().unwrap().name)),
             }
         },
@@ -416,7 +447,7 @@ fn calc_expression(
         Expr::Variable(name) => {
             let rhs = match find_in_scopes(scopes,name) {
                 Some(Identifier{variant:IdentifierVariant::Variable{reg:r,..},..}) => *r,
-                Some(Identifier{variant:IdentifierVariant::VariableRef{reg:r},..}) => *r,
+                // Some(Identifier{variant:IdentifierVariant::VariableRef{reg:r},..}) => *r,
                 _ => unreachable!(), // code was checked during reduce_const step, and should only have (referenced) variables
             };
 
@@ -460,7 +491,7 @@ fn calc_expression(
 
             let array = match find_in_scopes(scopes,name) {
                 Some(Identifier{variant:IdentifierVariant::Array{reg:r,..},..}) => *r,
-                Some(Identifier{variant:IdentifierVariant::ArrayRef{reg:r},..}) => *r,
+                // Some(Identifier{variant:IdentifierVariant::ArrayRef{reg:r},..}) => *r,
                 _ => unreachable!(),
             };
         
@@ -468,7 +499,80 @@ fn calc_expression(
             (instr,reg,tv)
         },
         Expr::FnCall{name,args} => {
-            todo!();
+            // get function from scopes
+            // check number of arguments
+            // per argument:
+                // check argument type
+                    // evaluate expr -> reg, of which the VALUE will be copied - store any temp vars created
+                    // ref -> reg, of which the STACK POS will be copied
+                    // array -> reg:array, 
+            // get return register
+            // call function
+            // free temp registers
+
+            let mut instr = Vec::new();
+            let mut tvs:Vec<Option<usize>> = Vec::new(); //to store temp vars
+        
+            // get function
+            let fnid = find_in_scopes(scopes,name).unwrap();
+
+            // get args
+            let params = match fnid {
+                Identifier{variant:IdentifierVariant::Function{params},..} => params,
+                _=>unreachable!(),
+            };
+
+            // check number of args
+            if params.len() != args.len() {
+                return Err(format!("Function {name} expected {} arguments but received {}",params.len(),args.len()));
+            }
+
+            // parse arguments
+            let params = args.iter().zip(params.iter()).map(|(val,param)| 
+                Ok::<FnArg,Error>(match param {
+                    FnParam::Value(_) => {
+                        // argument can be any expression
+                        let (mut i,reg,tv) = calc_expression(scopes,expr,None)?;
+                        instr.append(&mut i);
+                        tvs.push(tv);
+                        FnArg{reg,mode:FnArgMode::Value}
+                    }
+                    FnParam::Reference(_) => {
+                        // argument must be a variable(name) where name refers to any (ref)variable
+                        if let Expr::Variable(name) = val {
+                            match find_in_scopes(scopes,name).unwrap() {
+                                Identifier{variant:IdentifierVariant::Variable{reg,..},..} =>
+                                    FnArg{reg:*reg,mode:FnArgMode::Reference},
+                                _=>unreachable!(),
+                            }
+                        } else {unreachable!();}
+                    }
+                    FnParam::Array(_) => {
+                        // argument must be Variable(name) where name refers to an array
+                        if let Expr::Variable(name) = val {
+                            match find_in_scopes(scopes,name).unwrap() {
+                                Identifier{variant:IdentifierVariant::Array{reg,..},..} =>
+                                    FnArg{reg:*reg,mode:FnArgMode::Reference},
+                                _=>unreachable!(),
+                            }
+                        } else {unreachable!();}
+                    }
+                })
+            ).collect::<Result<Vec<FnArg>,_>>()?;
+
+            // get output register
+            let (reg,tv) = get_reg(scopes,reg);
+
+            // call function
+            instr.push(MkInstr::Instr(Instr::FnCall { index: name.clone(), params, res: reg, stack: name.clone() }));
+
+            // free variables
+            for tv in tvs {
+                if let Some(tv)=tv {scopes.last_mut().unwrap().release_tmp(tv);}
+            }
+
+
+            (instr,reg,tv)
         },
         Expr::EnumVariant{..} => unreachable!(), // enum variants should have been converted to const already
     })
