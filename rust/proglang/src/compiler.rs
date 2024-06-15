@@ -36,6 +36,7 @@ pub enum Instr<L> {
     FnCall{index:L, params:Vec<FnArg>, res:Reg, stack:L},
     SystemCall{}, //todo
     Return{stack:L,value:Reg},
+    Init{stack:L,index:L},
 }
 
 impl Instr<String> {
@@ -64,6 +65,8 @@ impl Instr<String> {
             Instr::SystemCall {  } => Instr::SystemCall {  },
             Instr::UnaryOperator { op, rhs, res } =>
                 Instr::UnaryOperator { op, rhs:rhs.absshift(absshift), res:res.absshift(absshift) },
+
+            Instr::Init{stack, index} => Instr::Init{stack:*fnsizes.get(&stack).unwrap(),index:*markers.get(&index).unwrap()},
         }
     }
 }
@@ -1062,31 +1065,35 @@ pub fn compile(statements:Vec<Statement>) -> Result<Vec<Instr<usize>>,Error> {
 
     let mut fnsizes: HashMap<String,usize> = HashMap::new();
 
+    let mut instr = Vec::new();
+    instr.push(MkInstr::Instr(Instr::Init{index:"@root.START".to_string(),stack:"@root".to_string()}));
+    instr.push(MkInstr::Marker("@root.START".to_string()));
+
     // recursively move through statements
     let (mut code,mut functions) = recursive_compile(statements, &mut scopes, &mut fnsizes)?;
+    instr.append(&mut code);
     fnsizes.insert("@root".to_string(),scopes.first().unwrap().max_variables);
 
     // add JUMP to start of program (reboot after main has finished)
-    code.push(MkInstr::Instr(Instr::Jump{index:"@root.START".to_string()}));
+    instr.push(MkInstr::Instr(Instr::Jump{index:"@root.START".to_string()}));
 
     // add functions
-    code.append(&mut functions);
+    instr.append(&mut functions);
 
-    // determine final values of jumps
+    // determine final locations of jumps
     let mut markers:HashMap<String,usize> = HashMap::new();
-    markers.insert("@root.START".to_string(),0);
 
     let mut i:usize = 0;
-    for mkinstr in code.iter() {
+    for mkinstr in instr.iter() {
         match mkinstr {
             MkInstr::Marker(m) => {markers.insert(m.clone(),i);}
             MkInstr::Instr(_) => {i+=1;}
         }
     }
 
-    // create final code, without markers, and with valid jump values
+    // create final code, without markers, and with valid jump values, and with shifted ABS values and correct stack sizes
     let global_size = *fnsizes.get("@root").unwrap();
-    Ok(code
+    Ok(instr
         .into_iter()
         .filter_map(|mki|
             match mki {
