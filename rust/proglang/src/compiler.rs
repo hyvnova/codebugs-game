@@ -333,7 +333,7 @@ pub fn reduce_const(scopes:&Vec<Scope>,expr:&Expr)-> Result<Expr,Error> {
                 Some(Identifier{variant:IdentifierVariant::Constant{value},..}) => Ok(Expr::Num(*value)),
                 Some(Identifier{variant:IdentifierVariant::Variable{..},..}) => Ok(Expr::Variable(name.clone())),
                 // Some(Identifier{variant:IdentifierVariant::VariableRef{..},..}) => Ok(Expr::Variable(name.clone())),
-                _ => Err(format!("{name} does not name a variable or constant in scope {}",scopes.last().unwrap().name)),
+                _ => Err(format!("'{name}' does not name a variable or constant in scope {}",scopes.last().unwrap().name)),
             }
         }
         Expr::EnumVariant{name,variant} => {
@@ -1007,6 +1007,7 @@ fn recursive_compile(statements:Vec<Statement>,scopes:&mut Vec<Scope>,fnsizes:&m
                     scope.variables+=1;
                     scope.max_variables+=1;
                 }
+                scopes.push(scope);
 
                 // parse code and add to functions
                 let (mut i,mut i_fn) = recursive_compile(code, scopes, fnsizes)?;
@@ -1063,6 +1064,7 @@ pub fn compile(statements:Vec<Statement>) -> Result<Vec<Instr<usize>>,Error> {
 
     // recursively move through statements
     let (mut code,mut functions) = recursive_compile(statements, &mut scopes, &mut fnsizes)?;
+    fnsizes.insert("@root".to_string(),scopes.first().unwrap().max_variables);
 
     // add JUMP to start of program (reboot after main has finished)
     code.push(MkInstr::Instr(Instr::Jump{index:"@root.START".to_string()}));
@@ -1089,7 +1091,7 @@ pub fn compile(statements:Vec<Statement>) -> Result<Vec<Instr<usize>>,Error> {
         .filter_map(|mki|
             match mki {
                 MkInstr::Marker(_) => None,
-                MkInstr::Instr(i) => Some(i.fill_markers(&markers,&fnsizes,global_size as i32)),
+                MkInstr::Instr(i) => Some(i.fill_markers(&markers,&fnsizes,global_size as i32-1)),
             })
         .collect())
         
