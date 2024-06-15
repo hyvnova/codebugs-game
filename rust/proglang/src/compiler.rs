@@ -13,6 +13,7 @@ pub struct FnArg {
     reg:Reg,
     mode:FnArgMode,
 }
+
 #[derive(Debug,Clone)]
 pub enum FnArgMode {Value,Reference}
 
@@ -38,20 +39,31 @@ pub enum Instr<L> {
 }
 
 impl Instr<String> {
-    fn fill_marker(self,markers:&HashMap<String,usize>) -> Instr<usize> {
+    fn fill_markers(self,markers:&HashMap<String,usize>,fnsizes:&HashMap<String,usize>,absshift:i32) -> Instr<usize> {
         match self {
             Instr::Jump{index} => Instr::Jump{index:*markers.get(&index).unwrap()},
-            Instr::JumpUnless{index,condition} => Instr::JumpUnless{index:*markers.get(&index).unwrap(),condition},
-            Instr::FnCall{index,params,res,stack} => Instr::FnCall{index:*markers.get(&index).unwrap(),params,res,stack:todo!()},
+            Instr::JumpUnless{index,condition} =>
+                Instr::JumpUnless{index:*markers.get(&index).unwrap(),condition:condition.absshift(absshift)},
+            Instr::FnCall{index,params,res,stack} => 
+                Instr::FnCall{
+                    index:*markers.get(&index).unwrap(),
+                    params:params.into_iter().map(|x| FnArg{reg:x.reg.absshift(absshift),mode:x.mode}).collect(),
+                    res:res.absshift(absshift),
+                    stack:*fnsizes.get(&stack).unwrap()},
 
-            Instr::Return { stack, value } => Instr::Return { stack: todo!(), value }, // get stack size of function by name
+            Instr::Return { stack, value } =>
+                Instr::Return { stack:*fnsizes.get(&stack).unwrap(), value:value.absshift(absshift) }, // get stack size of function by name
 
             //i => i as Instr<usize>,
-            Instr::ArrayAssign { array, index, value } => Instr::ArrayAssign { array, index, value },
-            Instr::ArrayIndex { array, index, res } => Instr::ArrayIndex { array, index, res },
-            Instr::BinaryOperator { op, lhs, rhs, res } => Instr::BinaryOperator { op, lhs, rhs, res },
+            Instr::ArrayAssign { array, index, value } =>
+                Instr::ArrayAssign { array, index:index.absshift(absshift), value:value.absshift(absshift) },
+            Instr::ArrayIndex { array, index, res } =>
+                Instr::ArrayIndex { array, index:index.absshift(absshift), res:res.absshift(absshift) },
+            Instr::BinaryOperator { op, lhs, rhs, res } =>
+                Instr::BinaryOperator { op, lhs:lhs.absshift(absshift), rhs:rhs.absshift(absshift), res:res.absshift(absshift) },
             Instr::SystemCall {  } => Instr::SystemCall {  },
-            Instr::UnaryOperator { op, rhs, res } => Instr::UnaryOperator { op, rhs, res },
+            Instr::UnaryOperator { op, rhs, res } =>
+                Instr::UnaryOperator { op, rhs:rhs.absshift(absshift), res:res.absshift(absshift) },
         }
     }
 }
@@ -63,6 +75,18 @@ pub enum Reg {
     VarRef(StackRef), //take value at place stored in this place
     Array(StackRef,usize), //array starting at this place with this length
     ArrayRef(StackRef), //.... the array pointed to by this place
+}
+
+impl Reg {
+    pub fn absshift(self,shift:i32) -> Self {
+        match self {
+            Reg::Const(x) => Reg::Const(x),
+            Reg::Var(sr) => Reg::Var(sr.absshift(shift)),
+            Reg::VarRef(sr) => Reg::VarRef(sr.absshift(shift)),
+            Reg::Array(sr, sz) => Reg::Array(sr.absshift(shift),sz),
+            Reg::ArrayRef(sr) => Reg::ArrayRef(sr.absshift(shift)),
+        }
+    }
 }
 
 /*
@@ -93,6 +117,15 @@ pub enum StackRef {
     Abs(i32), // stack index
 }
 
+impl StackRef {
+    pub fn absshift(self,shift:i32) -> Self {
+        match self {
+            StackRef::Rel(x) => StackRef::Rel(x),
+            StackRef::Abs(x) => StackRef::Abs(x+shift),
+        }
+    }
+}
+
 
 
 
@@ -117,7 +150,7 @@ pub enum IdentifierVariant {
     // },
     Array{
         r#type:Option<String>,
-        size:usize,
+        // size:usize,
         reg:Reg,
     },
     // ArrayRef{
@@ -142,7 +175,7 @@ pub enum IdentifierVariant {
 #[derive(Debug,Clone,Copy,PartialEq)]
 pub enum ScopeVariant {
     If,
-    IfElse,
+    // IfElse,
     While,
     Loop,
     Function,
@@ -152,7 +185,7 @@ impl ScopeVariant {
     fn prefix(&self) -> String {
         ("@".to_owned()+match self {
             Self::If => "if",
-            Self::IfElse => "ifelse",
+            // Self::IfElse => "ifelse",
             Self::While => "while",
             Self::Loop => "loop",
             Self::Function => "fn",
@@ -200,6 +233,7 @@ impl Scope {
         let mut scope = self.create_sub(name,ScopeVariant::Function);
         scope.variables = 2; // PC + return addr
         scope.max_variables = 2;
+        scope.global=false;
         scope
     }
     /// reabsorb subscope
@@ -315,15 +349,22 @@ pub fn reduce_const(scopes:&Vec<Scope>,expr:&Expr)-> Result<Expr,Error> {
         }
         Expr::ArrayIndex{name,index} => {
             match find_in_scopes(&scopes,name) {
-                Some(Identifier{variant:IdentifierVariant::Array{..}|IdentifierVariant::Array{..},..}) => 
+                Some(Identifier{variant:IdentifierVariant::Array{..},..}) => 
                     Ok(Expr::ArrayIndex{name:name.clone(),index:Box::new(reduce_const(scopes,index)?)}),
                 _ => Err(format!("{name} does not name an array in scope {}",scopes.last().unwrap().name)),
             }
         },
         Expr::FnCall{name,args} => {
             match find_in_scopes(&scopes,name) {
-                Some(Identifier{variant:IdentifierVariant::Function{..},..}) => // TODO: only compile arguments that are of VALUE type
-                    todo!()+Ok(Expr::FnCall{name:name.clone(),args:args.iter().map(|arg| reduce_const(scopes,arg)).collect::<Result<Vec<_>,_>>()?}),
+                Some(Identifier{variant:IdentifierVariant::Function{params},..}) => // only compile arguments that are of VALUE/REF type, since arrays are seens as variables, that aren't variables in this scope
+                    Ok(Expr::FnCall{
+                        name:name.clone(),
+                        args:args.iter().zip(params.iter()).map(|(arg,param)|
+                            if !matches!(param,FnParam::Array(_)) {
+                                reduce_const(scopes,arg)
+                            } else {Ok(arg.clone())}
+                        ).collect::<Result<Vec<_>,_>>()?
+                    }),
                 _ => Err(format!("{name} does not name a function in scope {}",scopes.last().unwrap().name)),
             }
         },
@@ -530,7 +571,7 @@ fn calc_expression(
             let mut tvs:Vec<Option<usize>> = Vec::new(); //to store temp vars
         
             // get function
-            let fnid = find_in_scopes(scopes,name).unwrap();
+            let fnid = find_in_scopes(scopes,name).unwrap().clone();
 
             // get args
             let params = match fnid {
@@ -621,7 +662,7 @@ fn recursive_compile(statements:Vec<Statement>,scopes:&mut Vec<Scope>,fnsizes:&m
                             r#type:r#type.clone(),
                             reg:Reg::Var(
                                 if scope.global {
-                                    StackRef::Abs(todo!()) // depends on stack size of main program, which is unknown - maybe take abs0!=stack0... temporarily? fix them later? is ugly but oh well I suppose it needs to be done
+                                    StackRef::Abs(-(scope.variables as i32)) // depends on stack size of main program, which is unknown - maybe take abs0!=stack0... temporarily? fix them later? is ugly but oh well I suppose it needs to be done
                                 } else {
                                     StackRef::Rel(-(scope.variables as i32))
                                 }
@@ -645,10 +686,10 @@ fn recursive_compile(statements:Vec<Statement>,scopes:&mut Vec<Scope>,fnsizes:&m
                         name.clone(),
                         IdentifierVariant::Array{
                             r#type:r#type.clone(),
-                            size:size,
+                            // size:size,
                             reg:Reg::Array(
                                 if scope.global {
-                                    StackRef::Abs(todo!())
+                                    StackRef::Abs(-((scope.variables+size-1) as i32))
                                 } else {
                                     StackRef::Abs(-((scope.variables+size-1) as i32))
                                 },
@@ -712,23 +753,38 @@ fn recursive_compile(statements:Vec<Statement>,scopes:&mut Vec<Scope>,fnsizes:&m
         match statement {
             Statement::VarAssign{name,value} => {
                 let value = reduce_const(scopes,&value)?;
-                // compute value
-                // assign to variable
+
                 let reg = match find_in_scopes(scopes,&name) {
-                    Some(Identifier{variant:IdentifierVariant::Variable{reg,..},..}) => {
-                        reg
-                    }
-                    _ => return Err(format!("{name} does not name a variable in scope {}",scopes.last().unwrap().name)),
+                    Some(Identifier{variant:IdentifierVariant::Variable{reg,..},..}) => *reg,
+                    _ => unreachable!(),
                 };
-                todo!();
-                let mut occupied = scopes.last().unwrap().variables;
-//                instr.append(calc_expression(scopes,occupied,value,var));
+
+                let (mut i,_,_) = calc_expression(scopes,&value,Some(reg))?;
+                instr.append(&mut i);
+
             }
             Statement::ArrayAssign{name,index,value} => {
                 // compute index
                 // compute value
                 // assign to array
-                todo!();
+                let index = reduce_const(scopes,&index)?;
+                let value = reduce_const(scopes,&value)?;
+
+                let (mut i,reg_index,tv_index) = calc_expression(scopes,&index,None)?;
+                instr.append(&mut i);
+
+                let (mut i,reg_value,tv_value) = calc_expression(scopes,&value,None)?;
+                instr.append(&mut i);
+
+                if let Some(tv) = tv_value {scopes.last_mut().unwrap().release_tmp(tv);}
+                if let Some(tv) = tv_index {scopes.last_mut().unwrap().release_tmp(tv);}
+
+                let reg = match find_in_scopes(scopes,&name) {
+                    Some(Identifier{variant:IdentifierVariant::Array{reg,..},..}) => *reg,
+                    _ => unreachable!(),
+                };
+
+                instr.push(MkInstr::Instr(Instr::ArrayAssign{array:reg,index:reg_index,value:reg_value}));
             }
 
             Statement::If{condition,code} => {
@@ -739,28 +795,51 @@ fn recursive_compile(statements:Vec<Statement>,scopes:&mut Vec<Scope>,fnsizes:&m
                 // add instructions for code
                 // register scope data
                 // pop scope
-                let scope = scopes.last().unwrap().create_sub(format!("{}",cnt_while),ScopeVariant::Loop);
-                cnt_while+=1;
+                let scope = scopes.last().unwrap().create_sub(format!("{}",cnt_if),ScopeVariant::If);
+                cnt_if+=1;
 
-                instr.push(MkInstr::Marker(scope.name+".START"));
+                instr.push(MkInstr::Marker(scope.name.clone()+".START")); // not really needed, but useful for clarity
 
                 let (i,reg,tv) = calc_expression(scopes,&condition,None)?;
-                instr.push(MkInstr::Instr(Instr::JumpUnless{index:scope.name+".END",condition:reg}));
+                instr.push(MkInstr::Instr(Instr::JumpUnless{index:scope.name.clone()+".END",condition:reg}));
                 if let Some(tv) = tv {scopes.last_mut().unwrap().release_tmp(tv);}
 
                 let (mut i,mut i_fn)=recursive_compile(vec![*code],scopes,fnsizes)?;
                 instr.append(&mut i);
                 functions.append(&mut i_fn);
 
-                instr.push(MkInstr::Marker(scope.name+".END"));
+                instr.push(MkInstr::Marker(scope.name.clone()+".END"));
 
                 let scope = scopes.pop().unwrap();
                 scopes.last_mut().unwrap().absorb_sub(scope);
             }
             Statement::IfElse{condition,yes,no} => {
-                let condition = reduce_const(scopes,&condition);
+                let condition = reduce_const(scopes,&condition)?;
                 // like if, but at end of first code jump to end of second instr
-                todo!();
+                let scope = scopes.last().unwrap().create_sub(format!("{}",cnt_if),ScopeVariant::If);
+                cnt_if+=1;
+
+                instr.push(MkInstr::Marker(scope.name.clone()+".START")); //not really needed
+
+                let (i,reg,tv) = calc_expression(scopes,&condition,None)?;
+                instr.push(MkInstr::Instr(Instr::JumpUnless{index:scope.name.clone()+".ELSE",condition:reg}));
+                if let Some(tv) = tv {scopes.last_mut().unwrap().release_tmp(tv);}
+
+                let (mut i,mut i_fn)=recursive_compile(vec![*yes],scopes,fnsizes)?;
+                instr.append(&mut i);
+                functions.append(&mut i_fn);
+
+                instr.push(MkInstr::Instr(Instr::Jump{index:scope.name.clone()+".END"}));
+                instr.push(MkInstr::Marker(scope.name.clone()+".ELSE"));
+
+                let (mut i,mut i_fn)=recursive_compile(vec![*no],scopes,fnsizes)?;
+                instr.append(&mut i);
+                functions.append(&mut i_fn);
+
+                instr.push(MkInstr::Marker(scope.name.clone()+".END"));
+
+                let scope = scopes.pop().unwrap();
+                scopes.last_mut().unwrap().absorb_sub(scope);
             }
             Statement::While{condition,code} => {
                 let condition = reduce_const(scopes,&condition)?;
@@ -774,10 +853,10 @@ fn recursive_compile(statements:Vec<Statement>,scopes:&mut Vec<Scope>,fnsizes:&m
                 let scope = scopes.last().unwrap().create_sub(format!("{}",cnt_while),ScopeVariant::Loop);
                 cnt_while+=1;
 
-                instr.push(MkInstr::Marker(scope.name+".START"));
+                instr.push(MkInstr::Marker(scope.name.clone()+".START"));
 
                 let (i,reg,tv) = calc_expression(scopes,&condition,None)?;
-                instr.push(MkInstr::Instr(Instr::JumpUnless{index:scope.name+".END",condition:reg}));
+                instr.push(MkInstr::Instr(Instr::JumpUnless{index:scope.name.clone()+".END",condition:reg}));
                 if let Some(tv) = tv {scopes.last_mut().unwrap().release_tmp(tv);}
 
                 let (mut i,mut i_fn)=recursive_compile(vec![*code],scopes,fnsizes)?;
@@ -786,8 +865,8 @@ fn recursive_compile(statements:Vec<Statement>,scopes:&mut Vec<Scope>,fnsizes:&m
 
                 let scope = scopes.pop().unwrap();
 
-                instr.push(MkInstr::Instr(Instr::Jump{index:scope.name+".START"}));
-                instr.push(MkInstr::Marker(scope.name+".END"));
+                instr.push(MkInstr::Instr(Instr::Jump{index:scope.name.clone()+".START"}));
+                instr.push(MkInstr::Marker(scope.name.clone()+".END"));
                 
                 scopes.last_mut().unwrap().absorb_sub(scope);
             }
@@ -808,8 +887,8 @@ fn recursive_compile(statements:Vec<Statement>,scopes:&mut Vec<Scope>,fnsizes:&m
 
                 let scope = scopes.pop().unwrap();
 
-                instr.push(MkInstr::Instr(Instr::Jump{index:scope.name+".START"}));
-                instr.push(MkInstr::Marker(scope.name+".END"));
+                instr.push(MkInstr::Instr(Instr::Jump{index:scope.name.clone()+".START"}));
+                instr.push(MkInstr::Marker(scope.name.clone()+".END"));
                 
                 scopes.last_mut().unwrap().absorb_sub(scope);
             }
@@ -819,9 +898,7 @@ fn recursive_compile(statements:Vec<Statement>,scopes:&mut Vec<Scope>,fnsizes:&m
                 // jumpt to END of scope (i.e. exactly afterwards)
                 let loop_scope = find_scope_variant(scopes,&[ScopeVariant::While,ScopeVariant::Loop]);
                 if let Some(loop_scope)=loop_scope {
-                    let loop_name = loop_scope.name;
-
-                    instr.push(MkInstr::Instr(Instr::Jump{index:loop_name+".END"}));
+                    instr.push(MkInstr::Instr(Instr::Jump{index:loop_scope.name.clone()+".END"}));
                 } else {
                     return Err(format!("Break statement outside of loop in scope {}",scopes.last().unwrap().name))
                 }
@@ -833,9 +910,7 @@ fn recursive_compile(statements:Vec<Statement>,scopes:&mut Vec<Scope>,fnsizes:&m
                 // while: jump to before computation of condition
                 let loop_scope = find_scope_variant(scopes,&[ScopeVariant::While,ScopeVariant::Loop]);
                 if let Some(loop_scope)=loop_scope {
-                    let loop_name = loop_scope.name;
-
-                    instr.push(MkInstr::Instr(Instr::Jump{index:loop_name+".START"}));
+                    instr.push(MkInstr::Instr(Instr::Jump{index:loop_scope.name.clone()+".START"}));
                 } else {
                     return Err(format!("Continue statement outside of loop in scope {}",scopes.last().unwrap().name))
                 }
@@ -848,7 +923,7 @@ fn recursive_compile(statements:Vec<Statement>,scopes:&mut Vec<Scope>,fnsizes:&m
                 if fn_scope.global {
                     return Err(format!("Return statement outside of function in scope {}",scopes.last().unwrap().name))
                 }
-                let fn_name = fn_scope.name;
+                let fn_name = fn_scope.name.clone();
 
                 let (mut i,reg,tv) = calc_expression(scopes,&value,None)?;
                 instr.append(&mut i);
@@ -895,7 +970,6 @@ fn recursive_compile(statements:Vec<Statement>,scopes:&mut Vec<Scope>,fnsizes:&m
             Statement::FnDef{name,params,code} => {
                 // determine code for function 
                 // must be appended to script after
-                todo!();
 
                 // create function scope
                 // add parameters to scope
@@ -903,9 +977,50 @@ fn recursive_compile(statements:Vec<Statement>,scopes:&mut Vec<Scope>,fnsizes:&m
                 // add instructions to functions
                 // register function size
                 // reabsorb scope
+                
+                // make scope
+                let mut scope = scopes.last().unwrap().create_fn(name);
+                functions.push(MkInstr::Marker(scope.name.clone()+".START"));
+
+                // add params
+                for param in params.into_iter() {
+                    match param {
+                        FnParam::Value(name) =>
+                            scope.insert(
+                                name,
+                                IdentifierVariant::Variable{
+                                    reg:Reg::Var(StackRef::Rel(-(scope.variables as i32))),
+                                    r#type:None}).unwrap(),
+                        FnParam::Reference(name) =>
+                            scope.insert(
+                                name,
+                                IdentifierVariant::Variable{
+                                    reg:Reg::VarRef(StackRef::Rel(-(scope.variables as i32))),
+                                    r#type:None}).unwrap(),
+                        FnParam::Array(name) =>
+                        scope.insert(
+                            name,
+                            IdentifierVariant::Array{
+                                reg:Reg::ArrayRef(StackRef::Rel(-(scope.variables as i32))),
+                                r#type:None}).unwrap(),
+                    }
+                    scope.variables+=1;
+                    scope.max_variables+=1;
+                }
+
+                // parse code and add to functions
+                let (mut i,mut i_fn) = recursive_compile(code, scopes, fnsizes)?;
+                functions.append(&mut i);
+
+                let scope = scopes.pop().unwrap();
+                functions.push(MkInstr::Marker(scope.name.clone()+".END")); //mark end
+                fnsizes.insert(scope.name.clone(),scope.max_variables); //register size
+                scopes.last_mut().unwrap().absorb_sub(scope);
+
+                functions.append(&mut i_fn); // add subfunctions afterwards
 
 
-                // set aside some things for system calls? they are special. need proper way to send output to outside of bugs
+                // TODO set aside some things for system calls? they are special. need proper way to send output to outside of bugs
 
             }
         }
@@ -918,7 +1033,7 @@ fn recursive_compile(statements:Vec<Statement>,scopes:&mut Vec<Scope>,fnsizes:&m
             instr.iter().rev().filter(|mki| matches!(mki,MkInstr::Instr(_))).next(),
             Some(MkInstr::Instr(Instr::Return{..}))
         ) { //last instr (not marker!) is not a Return statement
-            instr.push(MkInstr::Instr(Instr::Return{stack:todo!(),value:Reg::Const(0)}));
+            instr.push(MkInstr::Instr(Instr::Return{stack:scopes.last().unwrap().name.clone(),value:Reg::Const(0)}));
         }
     }
     
@@ -968,12 +1083,13 @@ pub fn compile(statements:Vec<Statement>) -> Result<Vec<Instr<usize>>,Error> {
     }
 
     // create final code, without markers, and with valid jump values
+    let global_size = *fnsizes.get("@root").unwrap();
     Ok(code
         .into_iter()
         .filter_map(|mki|
             match mki {
                 MkInstr::Marker(_) => None,
-                MkInstr::Instr(i) => Some(i.fill_marker(&markers)),
+                MkInstr::Instr(i) => Some(i.fill_markers(&markers,&fnsizes,global_size as i32)),
             })
         .collect())
         

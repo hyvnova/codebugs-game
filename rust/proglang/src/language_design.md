@@ -200,7 +200,7 @@ compile all functions to instructions
                 arrayref
                     absolute(?) or relative position on stack
                 fn
-                    full name
+                    full name?
 
     keep track of max number of temp vars (per scope -> per function)
 put all functions in a list, and fix their relative references (function call references)
