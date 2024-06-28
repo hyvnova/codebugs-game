@@ -2,9 +2,13 @@
 var x,y;
 const Z = 4;
 
-x = y + Z;
+x = 1;
 
-fn foo(a,&b,c[]) {
+fn foo(a,&b) {
     var q;
-    return a+b;
+    q = a+b;
+    b=a;
+    return q;
 }
+
+y = foo(Z,x);

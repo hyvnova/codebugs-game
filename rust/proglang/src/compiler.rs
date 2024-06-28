@@ -10,8 +10,8 @@ type Error = String;
 
 #[derive(Debug,Clone)]
 pub struct FnArg {
-    reg:Reg,
-    mode:FnArgMode,
+    pub reg:Reg,
+    pub mode:FnArgMode,
 }
 
 #[derive(Debug,Clone)]
