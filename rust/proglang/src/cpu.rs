@@ -77,8 +77,8 @@ impl<SC:SysCall> CPU<SC> {
                 self.sp-=stack;
             }
             Instr::Init { stack, index } => {
-                self.sp+=stack;
-                self.memory[self.sp]=*index as i32-1;
+                self.sp=*stack-1;
+                self.memory[self.sp]=*index as i32;
             }
         }
 
@@ -110,7 +110,7 @@ impl<SC:SysCall> CPU<SC> {
     pub fn set_val(&mut self, reg:Reg, value:i32) {
         // set value----
         match reg {
-            Reg::Const(x) => {}, // storing in CONST is a safe thing to do
+            Reg::Const(_) => {}, // storing in CONST is a safe thing to do
             Reg::Var(sr) => {
                 let index=self.stack_index(sr);
                 self.memory[index] = value
@@ -128,9 +128,9 @@ impl<SC:SysCall> CPU<SC> {
     pub fn get_array(&self, reg:Reg) -> (i32,usize) {
         // get reference to array, split into memory location and length
         match reg {
-            Reg::Const(x) => panic!(),
-            Reg::Var(sr) => panic!(),
-            Reg::VarRef(sr) => panic!(),
+            Reg::Const(_) => panic!(),
+            Reg::Var(_) => panic!(),
+            Reg::VarRef(_) => panic!(),
             Reg::Array(sr, len) => (self.stack_index(sr) as i32,len),
             Reg::ArrayRef(sr) => {
                 let p = self.memory[self.stack_index(sr)];

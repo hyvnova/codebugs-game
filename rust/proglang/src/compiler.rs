@@ -1,4 +1,16 @@
+/* TODO:
+
+- syscalls
+- allow arrayindex to be parsed as a referenced variable
+- array slicing (would require parser changes too)
+
+*/
+
+
+
+
 use std::collections::HashMap;
+use log::debug;
 
 use crate::parser::{Statement,Expr,FnParam};
 use crate::operators::{UnaryOperator,BinaryOperator};
@@ -33,7 +45,7 @@ pub enum Instr<L> {
     ArrayAssign{array:Reg,index:Reg,value:Reg},
     Jump{index:L},
     JumpUnless{index:L,condition:Reg},
-    FnCall{index:L, params:Vec<FnArg>, res:Reg, stack:L},
+    FnCall{index:L, params:Vec<FnArg>, res:Reg, stack:L}, //index is full marker string, i.e. @root::@fn_foo
     SystemCall{}, //todo
     Return{stack:L,value:Reg},
     Init{stack:L,index:L},
@@ -47,10 +59,11 @@ impl Instr<String> {
                 Instr::JumpUnless{index:*markers.get(&index).unwrap(),condition:condition.absshift(absshift)},
             Instr::FnCall{index,params,res,stack} => 
                 Instr::FnCall{
-                    index:*markers.get(&index).unwrap(),
+                    index:*markers.get(&index).unwrap(),//_or_else(|| {debug!("{:?} {:?}",markers,index);panic!()}),
                     params:params.into_iter().map(|x| FnArg{reg:x.reg.absshift(absshift),mode:x.mode}).collect(),
                     res:res.absshift(absshift),
-                    stack:*fnsizes.get(&stack).unwrap()},
+                    stack:*fnsizes.get(&stack).unwrap_or_else(|| {debug!("{:?} {}",fnsizes,stack);panic!()}),
+                },
 
             Instr::Return { stack, value } =>
                 Instr::Return { stack:*fnsizes.get(&stack).unwrap(), value:value.absshift(absshift) }, // get stack size of function by name
@@ -138,7 +151,7 @@ impl StackRef {
 
 #[derive(Debug,Clone)]
 pub struct Identifier {
-    name: String,
+    name: String, // full name, ie @root::@fn_foo
     variant: IdentifierVariant,
 }
 
@@ -186,14 +199,14 @@ pub enum ScopeVariant {
 }
 impl ScopeVariant {
     fn prefix(&self) -> String {
-        ("@".to_owned()+match self {
-            Self::If => "if",
+        (match self {
+            Self::If => "@if_",
             // Self::IfElse => "ifelse",
-            Self::While => "while",
-            Self::Loop => "loop",
-            Self::Function => "fn",
-            Self::Block => "blk",
-        }+"_").to_string()
+            Self::While => "@while_",
+            Self::Loop => "@loop_",
+            Self::Function => "",
+            Self::Block => "@blk_",
+        }).to_string()
     }
 }
 
@@ -484,6 +497,7 @@ fn calc_expression(
     expr:&Expr,
     reg:Option<Reg> /* memory location to store result in */
 ) -> Result<(Vec<MkInstr>,Reg,Option<usize>),Error> {
+    debug!(" > CALC EXPR {:?}",expr);
 
     fn get_reg(scopes:&mut Vec<Scope>,reg:Option<Reg>) -> (Reg,Option<usize>) {
         if let Some(r) = reg {
@@ -592,7 +606,7 @@ fn calc_expression(
                 Ok::<FnArg,Error>(match param {
                     FnParam::Value(_) => {
                         // argument can be any expression
-                        let (mut i,reg,tv) = calc_expression(scopes,expr,None)?;
+                        let (mut i,reg,tv) = calc_expression(scopes,val,None)?;
                         instr.append(&mut i);
                         tvs.push(tv);
                         FnArg{reg,mode:FnArgMode::Value}
@@ -624,7 +638,7 @@ fn calc_expression(
             let (reg,tv) = get_reg(scopes,reg);
 
             // call function
-            instr.push(MkInstr::Instr(Instr::FnCall { index: name.clone(), params, res: reg, stack: name.clone() }));
+            instr.push(MkInstr::Instr(Instr::FnCall { index: fnid.name.clone()+".START", params, res: reg, stack: fnid.name.clone() }));
 
             // free variables
             for tv in tvs {
@@ -647,13 +661,14 @@ fn calc_expression(
 
 
 fn recursive_compile(statements:Vec<Statement>,scopes:&mut Vec<Scope>,fnsizes:&mut HashMap<String,usize>) -> Result<(Vec<MkInstr>,Vec<MkInstr>),Error> {
-
+    debug!("Starting compilation of scope {}",&scopes.last().unwrap().name);
     let mut instr:Vec<MkInstr> = Vec::new();
     let mut functions:Vec<MkInstr> = Vec::new(); //for functions placed after this one
 
     // first, register all elements in the current scope
     // should we do this? just functions maybe?
     for statement in statements.iter() {
+        debug!("Preompiling statement {:?}",statement);
         match statement {
             Statement::VarDef{vars,r#type} => {
                 // put variables into top scope
@@ -707,7 +722,7 @@ fn recursive_compile(statements:Vec<Statement>,scopes:&mut Vec<Scope>,fnsizes:&m
             Statement::FnDef{name,params,..} => {
                 // put function name and parameters into top scope
                 scopes.last_mut().unwrap().insert(
-                    name.clone(), 
+                    ScopeVariant::Function.prefix() + name, 
                     IdentifierVariant::Function{params:params.clone()}
                 )?;
             }
@@ -753,17 +768,23 @@ fn recursive_compile(statements:Vec<Statement>,scopes:&mut Vec<Scope>,fnsizes:&m
 
     // then, do the actual compilation to a format full of references (as number of variables on stack etc. and indices of functions are still uncertain)
     for statement in statements.into_iter() {
+        debug!("Fully compiling statement {:?}",statement);
         match statement {
             Statement::VarAssign{name,value} => {
+                debug!(" > starting compiling varassign");
+                debug!(" > reduce const");
                 let value = reduce_const(scopes,&value)?;
 
+                debug!(" > find variable");
                 let reg = match find_in_scopes(scopes,&name) {
                     Some(Identifier{variant:IdentifierVariant::Variable{reg,..},..}) => *reg,
                     _ => unreachable!(),
                 };
 
+                debug!(" > compile expr");
                 let (mut i,_,_) = calc_expression(scopes,&value,Some(reg))?;
                 instr.append(&mut i);
+                debug!(" > finished compiling varassign");
 
             }
             Statement::ArrayAssign{name,index,value} => {
@@ -803,7 +824,8 @@ fn recursive_compile(statements:Vec<Statement>,scopes:&mut Vec<Scope>,fnsizes:&m
 
                 instr.push(MkInstr::Marker(scope.name.clone()+".START")); // not really needed, but useful for clarity
 
-                let (i,reg,tv) = calc_expression(scopes,&condition,None)?;
+                let (mut i,reg,tv) = calc_expression(scopes,&condition,None)?;
+                instr.append(&mut i);
                 instr.push(MkInstr::Instr(Instr::JumpUnless{index:scope.name.clone()+".END",condition:reg}));
                 if let Some(tv) = tv {scopes.last_mut().unwrap().release_tmp(tv);}
 
@@ -824,7 +846,8 @@ fn recursive_compile(statements:Vec<Statement>,scopes:&mut Vec<Scope>,fnsizes:&m
 
                 instr.push(MkInstr::Marker(scope.name.clone()+".START")); //not really needed
 
-                let (i,reg,tv) = calc_expression(scopes,&condition,None)?;
+                let (mut i,reg,tv) = calc_expression(scopes,&condition,None)?;
+                instr.append(&mut i);
                 instr.push(MkInstr::Instr(Instr::JumpUnless{index:scope.name.clone()+".ELSE",condition:reg}));
                 if let Some(tv) = tv {scopes.last_mut().unwrap().release_tmp(tv);}
 
@@ -858,7 +881,8 @@ fn recursive_compile(statements:Vec<Statement>,scopes:&mut Vec<Scope>,fnsizes:&m
 
                 instr.push(MkInstr::Marker(scope.name.clone()+".START"));
 
-                let (i,reg,tv) = calc_expression(scopes,&condition,None)?;
+                let (mut i,reg,tv) = calc_expression(scopes,&condition,None)?;
+                instr.append(&mut i);
                 instr.push(MkInstr::Instr(Instr::JumpUnless{index:scope.name.clone()+".END",condition:reg}));
                 if let Some(tv) = tv {scopes.last_mut().unwrap().release_tmp(tv);}
 
@@ -980,6 +1004,7 @@ fn recursive_compile(statements:Vec<Statement>,scopes:&mut Vec<Scope>,fnsizes:&m
                 // add instructions to functions
                 // register function size
                 // reabsorb scope
+                debug!(" > start compiling function");
                 
                 // make scope
                 let mut scope = scopes.last().unwrap().create_fn(name);
@@ -1025,7 +1050,8 @@ fn recursive_compile(statements:Vec<Statement>,scopes:&mut Vec<Scope>,fnsizes:&m
 
 
                 // TODO set aside some things for system calls? they are special. need proper way to send output to outside of bugs
-
+                
+                debug!(" > finished compiling function");
             }
         }
     }
@@ -1041,6 +1067,8 @@ fn recursive_compile(statements:Vec<Statement>,scopes:&mut Vec<Scope>,fnsizes:&m
         }
     }
     
+
+    debug!("Finished compining scope");
     // return stuff
     Ok((instr,functions))
 }
@@ -1065,21 +1093,25 @@ pub fn compile(statements:Vec<Statement>) -> Result<Vec<Instr<usize>>,Error> {
 
     let mut fnsizes: HashMap<String,usize> = HashMap::new();
 
+    debug!("C: initial instructions");
     let mut instr = Vec::new();
     instr.push(MkInstr::Instr(Instr::Init{index:"@root.START".to_string(),stack:"@root".to_string()}));
     instr.push(MkInstr::Marker("@root.START".to_string()));
 
+    debug!("C: recusive compile");
     // recursively move through statements
     let (mut code,mut functions) = recursive_compile(statements, &mut scopes, &mut fnsizes)?;
     instr.append(&mut code);
     fnsizes.insert("@root".to_string(),scopes.first().unwrap().max_variables);
 
     // add JUMP to start of program (reboot after main has finished)
+    debug!("C: add jump to start and functions");
     instr.push(MkInstr::Instr(Instr::Jump{index:"@root.START".to_string()}));
 
     // add functions
     instr.append(&mut functions);
 
+    debug!("C: reate markers");
     // determine final locations of jumps
     let mut markers:HashMap<String,usize> = HashMap::new();
 
@@ -1091,6 +1123,7 @@ pub fn compile(statements:Vec<Statement>) -> Result<Vec<Instr<usize>>,Error> {
         }
     }
 
+    debug!("C: replace markers and offset absolute stack relations");
     // create final code, without markers, and with valid jump values, and with shifted ABS values and correct stack sizes
     let global_size = *fnsizes.get("@root").unwrap();
     Ok(instr

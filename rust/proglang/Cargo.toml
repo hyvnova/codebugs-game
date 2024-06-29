@@ -8,3 +8,6 @@ edition = "2021"
 [dependencies]
 #chumsky = "0.9.3"
 chumsky = { path = "../chumsky" }
+
+log = "*"
+env_logger = "*"

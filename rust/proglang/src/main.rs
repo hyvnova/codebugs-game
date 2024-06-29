@@ -1,4 +1,4 @@
-
+use log::LevelFilter;
 
 mod parser;
 mod operators;
@@ -16,6 +16,8 @@ struct SC {}
 impl SysCall for SC {}
 
 fn main() {
+    env_logger::builder().filter_level(LevelFilter::Debug).init();
+
     let src = std::fs::read_to_string("src/test.txt").unwrap();
 
     let parsed = parser().parse(src);
@@ -28,7 +30,7 @@ fn main() {
     let mut cpu = CPU::<SC>::new(20);
 
     loop {
-        println!("PC {}:\tMEM {:?}\n{:?}",cpu.memory[cpu.sp],cpu.memory,instr[cpu.memory[cpu.sp] as usize]);
+        println!("PC {}\tSP {}\tMEM {:?}\n{:?}\n",cpu.memory[cpu.sp],cpu.sp,cpu.memory,instr[cpu.memory[cpu.sp] as usize]);
         match cpu.execute(&instr) {
             Ok(Some(sc)) => println!("SYSCALL: {:?}",sc),
             Ok(None) => {}
