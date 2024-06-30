@@ -44,6 +44,9 @@ This includes:
 - replacing the stack sizes in function calls/return statements with the correct size
 - replacing jump indices with the indices of the instructions they refer to
 
+Operands of instructions are Regs. These are sources of data (constants, variables), but can also be saved to.
+
+
 */
 
 
