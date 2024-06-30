@@ -90,7 +90,7 @@ impl<SC:SysCall> CPU<SC> {
     pub fn get_ref(&self, reg:Reg) -> i32 {
         // get reference to variable
         match reg {
-            Reg::Const(_) => 0, /* ERROR */
+            Reg::Const(_) => -1, /* Constants are not stored in the memory; make sure indexing by -1 is fine */
             Reg::Var(sr) => self.stack_index(sr) as i32,
             Reg::VarRef(sr) => self.memory[self.stack_index(sr)], /* might cause ERROR */
             Reg::Array(sr, len) => (self.stack_index(sr) | (len<<16)) as i32,
@@ -117,8 +117,9 @@ impl<SC:SysCall> CPU<SC> {
             },
             Reg::VarRef(sr) => {
                 let index=self.stack_index(sr);
-                let index=self.memory[index] as usize;
-                self.memory[index] = value
+                let index=self.memory[index];
+                if index<0 {return;} // if Reg was a constant, the reference will be -1, which shouldn't do anything
+                self.memory[index as usize] = value
             },
             Reg::Array(_, _) => panic!(),
             Reg::ArrayRef(_) => panic!(),

@@ -6,6 +6,45 @@
 
 */
 
+/*
+
+DOCUMENTATION
+
+About the compilation process:
+
+The main premisse: to take a set of statements, and turn them into instructions, in the context of a set of nested scopes.
+
+Scopes keep track of identifiers; names that refer to things.
+They also keep track of the (extra) stack space that needs to be allocated for them, including temporary variables.
+
+For a set of instructions that need to be parsed, two main steps occur:
+- The identifications of identifiers (i.e. all variable, constant, and array definitions are parsed at the start of a scope)
+    This includes computing the values of constants. Constants cannot use function calls, only standard operators, constants, and enum variants.
+    Functions aren't parsed yet, just identified.
+- The parsing of the instructions.
+    This often includes parsing expressions.
+    Functions, code blocks, if/while statements etc. are parsed in new scopes.
+
+Expression parsing happens in two steps as well:
+- Evaluation and constant reduction
+    Operators for constants are reduced to their constant result
+    Identifiers are checked to be of the right type, and if possible, reduced to constants
+- Instruction compilation
+    Many expressions have sub-expressions. For example, in x = y+z, the addition has subexpressions for variable access.
+    Variables and constants are turned into Regs, while other subexpressions are compiled recusively.
+    This generally requires the intermediate results to be stored on the stack.
+    In these cases, temporary variables are requested at from the toplevel Scope.
+    After use, they are released again.
+
+
+During the compilation process, stack sizes and instruction indices are not yet known.
+Therefore, a final post processing step is executed, in which these are replaced by actual numbers.
+This includes:
+- shifting the absolute stack references by the stack size of the global scope
+- replacing the stack sizes in function calls/return statements with the correct size
+- replacing jump indices with the indices of the instructions they refer to
+
+*/
 
 
 
