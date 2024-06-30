@@ -32,13 +32,13 @@ pub enum FnArgMode {Value,Reference}
 
 #[derive(Debug)]
 enum MkInstr {
-    Instr(Instr<String>),
+    Instr(Instr<String,String>),
     Marker(String),
 }
 
 
 #[derive(Debug,Clone)]
-pub enum Instr<L> {
+pub enum Instr<L,SC> {
     BinaryOperator{op:BinaryOperator,lhs:Reg,rhs:Reg,res:Reg},
     UnaryOperator{op:UnaryOperator,rhs:Reg,res:Reg},
     ArrayIndex{array:Reg,index:Reg,res:Reg},
@@ -46,13 +46,13 @@ pub enum Instr<L> {
     Jump{index:L},
     JumpUnless{index:L,condition:Reg},
     FnCall{index:L, params:Vec<FnArg>, res:Reg, stack:L}, //index is full marker string, i.e. @root::@fn_foo
-    SystemCall{}, //todo
+    SystemCall{params:Vec<FnArg>, res:Reg, call:SC}, //todo
     Return{stack:L,value:Reg},
     Init{stack:L,index:L},
 }
 
-impl Instr<String> {
-    fn fill_markers(self,markers:&HashMap<String,usize>,fnsizes:&HashMap<String,usize>,absshift:i32) -> Instr<usize> {
+impl Instr<String,String> {
+    fn fill_markers(self,markers:&HashMap<String,usize>,fnsizes:&HashMap<String,usize>,absshift:i32) -> Instr<usize,String> {
         match self {
             Instr::Jump{index} => Instr::Jump{index:*markers.get(&index).unwrap()},
             Instr::JumpUnless{index,condition} =>
@@ -62,7 +62,13 @@ impl Instr<String> {
                     index:*markers.get(&index).unwrap(),//_or_else(|| {debug!("{:?} {:?}",markers,index);panic!()}),
                     params:params.into_iter().map(|x| FnArg{reg:x.reg.absshift(absshift),mode:x.mode}).collect(),
                     res:res.absshift(absshift),
-                    stack:*fnsizes.get(&stack).unwrap_or_else(|| {debug!("{:?} {}",fnsizes,stack);panic!()}),
+                    stack:*fnsizes.get(&stack).unwrap(), //unwrap_or_else(|| {debug!("{:?} {}",fnsizes,stack);panic!()}),
+                },
+            Instr::SystemCall{params,res,call} => 
+                Instr::SystemCall{
+                    params:params.into_iter().map(|x| FnArg{reg:x.reg.absshift(absshift),mode:x.mode}).collect(),
+                    res:res.absshift(absshift),
+                    call:call,
                 },
 
             Instr::Return { stack, value } =>
@@ -75,7 +81,6 @@ impl Instr<String> {
                 Instr::ArrayIndex { array, index:index.absshift(absshift), res:res.absshift(absshift) },
             Instr::BinaryOperator { op, lhs, rhs, res } =>
                 Instr::BinaryOperator { op, lhs:lhs.absshift(absshift), rhs:rhs.absshift(absshift), res:res.absshift(absshift) },
-            Instr::SystemCall {  } => Instr::SystemCall {  },
             Instr::UnaryOperator { op, rhs, res } =>
                 Instr::UnaryOperator { op, rhs:rhs.absshift(absshift), res:res.absshift(absshift) },
 
@@ -173,7 +178,8 @@ pub enum IdentifierVariant {
     //     reg:Reg,
     // },
     Function{
-        params:Vec<FnParam>
+        params:Vec<FnParam>,
+        sys: bool,
     },
     Constant{
         value:i32,
@@ -372,7 +378,7 @@ pub fn reduce_const(scopes:&Vec<Scope>,expr:&Expr)-> Result<Expr,Error> {
         },
         Expr::FnCall{name,args} => {
             match find_in_scopes(&scopes,name) {
-                Some(Identifier{variant:IdentifierVariant::Function{params},..}) => // only compile arguments that are of VALUE/REF type, since arrays are seens as variables, that aren't variables in this scope
+                Some(Identifier{variant:IdentifierVariant::Function{params,..},..}) => // only compile arguments that are of VALUE/REF type, since arrays are seens as variables, that aren't variables in this scope
                     Ok(Expr::FnCall{
                         name:name.clone(),
                         args:args.iter().zip(params.iter()).map(|(arg,param)|
@@ -591,8 +597,8 @@ fn calc_expression(
             let fnid = find_in_scopes(scopes,name).unwrap().clone();
 
             // get args
-            let params = match fnid {
-                Identifier{variant:IdentifierVariant::Function{params},..} => params,
+            let (params,is_syscall) = match fnid {
+                Identifier{variant:IdentifierVariant::Function{params,sys},..} => (params,sys),
                 _=>unreachable!(),
             };
 
@@ -638,8 +644,11 @@ fn calc_expression(
             let (reg,tv) = get_reg(scopes,reg);
 
             // call function
-            instr.push(MkInstr::Instr(Instr::FnCall { index: fnid.name.clone()+".START", params, res: reg, stack: fnid.name.clone() }));
-
+            if !is_syscall {
+                instr.push(MkInstr::Instr(Instr::FnCall { index: fnid.name.clone()+".START", params, res: reg, stack: fnid.name.clone() }));
+            } else {
+                instr.push(MkInstr::Instr(Instr::SystemCall { params, res: reg, call: name.clone() }));
+            }
             // free variables
             for tv in tvs {
                 if let Some(tv)=tv {scopes.last_mut().unwrap().release_tmp(tv);}
@@ -668,7 +677,7 @@ fn recursive_compile(statements:Vec<Statement>,scopes:&mut Vec<Scope>,fnsizes:&m
     // first, register all elements in the current scope
     // should we do this? just functions maybe?
     for statement in statements.iter() {
-        debug!("Preompiling statement {:?}",statement);
+        debug!("Precompiling statement {:?}",statement);
         match statement {
             Statement::VarDef{vars,r#type} => {
                 // put variables into top scope
@@ -723,7 +732,7 @@ fn recursive_compile(statements:Vec<Statement>,scopes:&mut Vec<Scope>,fnsizes:&m
                 // put function name and parameters into top scope
                 scopes.last_mut().unwrap().insert(
                     ScopeVariant::Function.prefix() + name, 
-                    IdentifierVariant::Function{params:params.clone()}
+                    IdentifierVariant::Function{params:params.clone(),sys:false}
                 )?;
             }
             Statement::ConstDef{name,value} => {
@@ -1076,10 +1085,19 @@ fn recursive_compile(statements:Vec<Statement>,scopes:&mut Vec<Scope>,fnsizes:&m
 
 
 
-pub fn compile(statements:Vec<Statement>) -> Result<Vec<Instr<usize>>,Error> {
+pub fn compile(statements:Vec<Statement>) -> Result<Vec<Instr<usize,String>>,Error> {
 
     // initialise global scope
     let mut scopes: Vec<Scope> = vec![
+        Scope{
+            name: "@builtin".to_string(),
+            global: true,
+            identifiers: HashMap::new(),
+            variant: ScopeVariant::Function,
+            tmp_vars: Vec::new(),
+            variables: 0, //no code
+            max_variables: 0,
+        },
         Scope{
             name: "@root".to_string(),
             global: true,
@@ -1088,8 +1106,14 @@ pub fn compile(statements:Vec<Statement>) -> Result<Vec<Instr<usize>>,Error> {
             tmp_vars: Vec::new(),
             variables: 2, //PC and ref dump
             max_variables: 2,
-        }
+        },
     ];
+
+    /// add some builtins
+    scopes[0].insert("print".to_string(),IdentifierVariant::Function{params:vec![FnParam::Value("x".to_string())],sys:true}).unwrap();
+    
+    
+    /// 
 
     let mut fnsizes: HashMap<String,usize> = HashMap::new();
 
@@ -1102,7 +1126,7 @@ pub fn compile(statements:Vec<Statement>) -> Result<Vec<Instr<usize>>,Error> {
     // recursively move through statements
     let (mut code,mut functions) = recursive_compile(statements, &mut scopes, &mut fnsizes)?;
     instr.append(&mut code);
-    fnsizes.insert("@root".to_string(),scopes.first().unwrap().max_variables);
+    fnsizes.insert("@root".to_string(),scopes.last().unwrap().max_variables);
 
     // add JUMP to start of program (reboot after main has finished)
     debug!("C: add jump to start and functions");

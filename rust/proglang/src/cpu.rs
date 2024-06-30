@@ -1,7 +1,7 @@
 
 
 
-use crate::compiler::{Instr,/*FnArg,*/FnArgMode,StackRef,Reg};
+use crate::compiler::{Instr,FnArg,FnArgMode,StackRef,Reg};
 // use crate::operators::{BinaryOperator,UnaryOperator};
 use std::marker::PhantomData;
 
@@ -19,13 +19,13 @@ impl<SC:SysCall> CPU<SC> {
     pub fn new(stacksize:usize) -> Self {
         Self {
             memory: vec![0;stacksize],
-            sp: 0, //TODO: 1 or 0? idk
+            sp: 0,
             phantom: PhantomData,
         }
     }
 
     // main important thing: instruction execution
-    pub fn execute(&mut self, program: &Vec<Instr<usize>>) -> Result<Option<()>,Error> {
+    pub fn execute(&mut self, program: &Vec<Instr<usize,String>>) -> Result<Option<(String,Vec<FnArg>,Reg)>,Error> {
         // get the PC
         let pc = self.memory[self.sp] as usize;
         
@@ -67,9 +67,9 @@ impl<SC:SysCall> CPU<SC> {
                     self.memory[self.sp-2-i] = values[i];
                 }
             }
-            Instr::SystemCall {  } => {
-                todo!();
-                return Ok(Some(()))
+            Instr::SystemCall { params, res, call } => {
+                //todo!();
+                return Ok(Some((call.clone(),params.clone(),*res)))
             }
             Instr::Return { stack, value } => {
                 let value = self.get_val(*value);

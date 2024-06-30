@@ -12,3 +12,5 @@ fn foo(a,&b) {
 }
 
 y = foo(Z,x);
+
+print(y);
