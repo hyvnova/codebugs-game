@@ -9,9 +9,10 @@ mod cpu;
 use parser::parser;
 use chumsky::Parser;
 
-use compiler::Environment;
-use cpu::{CPU,SysCall};
+use compiler::{Environment, SysCallParamCheck};
+use cpu::{CPU,SysCall,BuiltinOrSysCall};
 
+#[derive(Debug,Clone)]
 struct SC {}
 impl SysCall for SC {}
 
@@ -23,7 +24,10 @@ fn main() {
     let parsed = parser().parse(src);
     println!("PARSED:\n{:#?}",parsed);
 
-    let instr = Environment::new().compile(parsed.unwrap());
+    let instr = Environment::new()
+        .create_basescope("@sys".to_string())
+        .add_syscall("print".to_string(),BuiltinOrSysCall::SysCall(SC{}),SysCallParamCheck::Runtime).unwrap()
+        .compile(parsed.unwrap());
     println!("INSTR:\n{:#?}",instr);
     let instr=instr.unwrap();
 

@@ -18,7 +18,7 @@ pub struct FnParam {
     pub variant: FnParamVariant,
 }
 
-#[derive(Clone,Debug)]
+#[derive(Clone,Debug,Copy)]
 pub enum FnParamVariant {
     Value,
     Reference,

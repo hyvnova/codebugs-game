@@ -231,9 +231,10 @@ pub enum IdentifierVariant<SystemCall> {
     }
 }
 
+#[derive(Debug,Clone)]
 pub enum SysCallParamCheck {
     Pattern(Vec<FnParam>),
-    Match(fn(&Vec<FnArg>) -> Result<(),Error>),
+    Match(fn(&Vec<FnParamVariant>) -> Result<(),Error>),
     Runtime,
 }
 
@@ -280,7 +281,7 @@ pub struct Environment<SC> {
 }
 
 
-impl<SC> Environment<SC> {
+impl<SC:Clone+std::fmt::Debug> Environment<SC> {
 // compilation:
 
     /// Compile statements into current scope
@@ -295,7 +296,7 @@ impl<SC> Environment<SC> {
         debug!("Starting compilation of scope {}",&self.get_scope_name());
 
         // Register definitions
-        self.register_definition_statements(&statements)?;
+        self.register_definition_statements(&mut statements)?;
 
         // Compile statements
         self.compile_action_statements(statements, instr, instr_fn)?;
@@ -307,7 +308,7 @@ impl<SC> Environment<SC> {
 
 
     /// Register definitions of statements
-    fn register_definition_statements(&mut self, statements:&Vec<Statement>) -> Result<(),CompileError> {
+    fn register_definition_statements(&mut self, statements:&mut Vec<Statement>) -> Result<(),CompileError> {
         // first, register all elements in the current scope
         // should we do this? just functions maybe?
         for statement in statements.iter_mut() {
@@ -337,7 +338,7 @@ impl<SC> Environment<SC> {
                 Statement::ArrayDef{arrays,r#type} => {
                     // put arrays into top scope
                     for (name,size) in arrays {
-                        let size = self.compile_const_expr(&mut size)?;
+                        let size = self.compile_const_expr(size)?;
                         let scope = self.scopes.last_mut().unwrap();
                         if size<0 || size as usize > MAX_ARRAY_LEN {
                             return Err(format!("Array length {size} for array {name} in scope {} invalid",scope.name));
@@ -347,7 +348,7 @@ impl<SC> Environment<SC> {
                             name.clone(),
                             IdentifierVariant::Array{
                                 r#type:r#type.clone(),
-                                reg:Reg::Array(
+                                reg:ArrayReg::Array(
                                     if scope.global {
                                         StackRef::Abs(-((scope.stack_vars+size-1) as i32))
                                     } else {
@@ -371,7 +372,7 @@ impl<SC> Environment<SC> {
                 Statement::ConstDef{name,value} => {
                     // put const into top scope
                     // constants are evaluated NOW so they can only use constants that were defined previously
-                    let value = self.compile_const_expr(&mut value)?;
+                    let value = self.compile_const_expr(value)?;
                     self.insert_ident(
                         name.clone(),
                         IdentifierVariant::Constant{value, r#type:None}
@@ -383,8 +384,8 @@ impl<SC> Environment<SC> {
                     // they essentially act as bundled constants
                     let mut counted_variants:HashMap<String,i32> = HashMap::new();
                     let mut i:i32=-1;
-                    for (variant,value) in variants.into_iter_mut() {
-                        i = match value {Some(v)=>self.compile_const_expr(&mut v)?, _=>i+1};
+                    for (variant,value) in variants.iter_mut() {
+                        i = match value {Some(v)=>self.compile_const_expr(v)?, _=>i+1};
                         let old = counted_variants.insert(variant.clone(),i);
                         if let Some(_) = old {return Err(format!("Enum variant {variant} of enum {name} in scope {} is already defined",self.get_scope_name()));}
                     }
@@ -416,10 +417,10 @@ impl<SC> Environment<SC> {
 
 
         // then, do the actual compilation to a format full of references (as number of variables on stack etc. and indices of functions are still uncertain)
-        for statement in statements.into_iter_mut() {
+        for statement in statements.into_iter() {
             debug!("Fully compiling statement {:?}",statement);
             match statement {
-                Statement::VarAssign{name,value} => {
+                Statement::VarAssign{name,mut value} => {
                     debug!(" > starting compiling varassign");
                     debug!(" > reduce const");
                     self.preprocess_expr(&mut value)?;
@@ -431,21 +432,21 @@ impl<SC> Environment<SC> {
                     };
 
                     debug!(" > compile expr");
-                    self.compile_expr(&mut value, &mut instr,Some(reg))?;
+                    self.compile_expr(value, instr,Some(reg))?;
                     debug!(" > finished compiling varassign");
 
                 }
-                Statement::ArrayAssign{name,index,value} => {
+                Statement::ArrayAssign{name,mut index,mut value} => {
                     // compute index
                     // compute value
                     // assign to array
                     self.preprocess_expr(&mut index)?;
                     self.preprocess_expr(&mut value)?;
 
-                    let (reg_index,tmp_index) = self.compile_expr(&mut index, &mut instr, None)?;
-                    let (reg_value,tmp_value) = self.compile_expr(&mut value, &mut instr,None)?;
+                    let (reg_index,tmp_index) = self.compile_expr(index, instr, None)?;
+                    let (reg_value,tmp_value) = self.compile_expr(value, instr,None)?;
                     self.release_tmp(tmp_value);
-                    self.release_tmp(tmp_value);
+                    self.release_tmp(tmp_index);
 
                     let reg = match self.find_ident(&name) {
                         Some(Identifier{variant:IdentifierVariant::Array{reg,..},..}) => *reg,
@@ -455,52 +456,52 @@ impl<SC> Environment<SC> {
                     instr.push(MkOrInstr::Instr(Instr::ArrayAssign{array:reg,index:reg_index,value:reg_value}));
                 }
 
-                Statement::If{condition,code} => {
+                Statement::If{mut condition,code} => {
                     // open up IF scope
                     // add computations for computing expression
                     // add conditional jump to END of scope
                     // add instructions for code
                     // register scope data
                     // pop scope
-                    self.create_sub(format!("{}",cnt_if),ScopeVariant::If);
+                    self.create_subscope(format!("{}",cnt_if),ScopeVariant::If);
                     cnt_if+=1;
                     instr.push(MkOrInstr::Marker(self.get_scope_name().clone()+".START")); // not really needed, but useful for clarity
 
                     self.preprocess_expr(&mut condition)?;
 
-                    let (reg,tv) = self.compile_expr(&mut condition, &mut instr,None)?;
-                    instr.push(MkOrInstr::Instr(Instr::JumpUnless{index:self.get_scope_name()+".END",condition:reg}));
+                    let (reg,tv) = self.compile_expr(condition, instr,None)?;
+                    instr.push(MkOrInstr::Instr(Instr::JumpUnless{index:self.get_scope_name().clone()+".END",condition:reg}));
                     self.release_tmp(tv);
 
-                    self.compile_statements(vec![*code],&mut instr,&mut instr_fn)?;
+                    self.compile_statements(vec![*code],instr,instr_fn)?;
 
-                    instr.push(MkOrInstr::Marker(self.get_scope_name()+".END"));
+                    instr.push(MkOrInstr::Marker(self.get_scope_name().clone()+".END"));
                     self.pop_scope();
                 }
-                Statement::IfElse{condition,yes,no} => {
+                Statement::IfElse{mut condition,yes,no} => {
 
                     // like if, but at end of first code jump to end of second instr
-                    self.create_sub(format!("{}",cnt_if),ScopeVariant::If);
+                    self.create_subscope(format!("{}",cnt_if),ScopeVariant::If);
                     cnt_if+=1;
-                    instr.push(MkOrInstr::Marker(self.get_scope_name()+".START")); //not really needed
+                    instr.push(MkOrInstr::Marker(self.get_scope_name().clone()+".START")); //not really needed
 
-                    let condition = self.preprocess_expr(&mut condition)?;
+                    self.preprocess_expr(&mut condition)?;
 
-                    let (reg,tv) = self.compile_expr(&condition,&mut instr, None)?;
-                    instr.push(MkOrInstr::Instr(Instr::JumpUnless{index:self.get_scope_name()+".ELSE",condition:reg}));
+                    let (reg,tv) = self.compile_expr(condition,instr, None)?;
+                    instr.push(MkOrInstr::Instr(Instr::JumpUnless{index:self.get_scope_name().clone()+".ELSE",condition:reg}));
                     self.release_tmp(tv);
 
-                    self.compile_statements(vec![*yes],&mut instr, &mut instr_fn)?;
+                    self.compile_statements(vec![*yes],instr,instr_fn)?;
 
-                    instr.push(MkOrInstr::Instr(Instr::Jump{index:self.get_scope_name()+".END"}));
-                    instr.push(MkOrInstr::Marker(self.get_scope_name()+".ELSE"));
+                    instr.push(MkOrInstr::Instr(Instr::Jump{index:self.get_scope_name().clone()+".END"}));
+                    instr.push(MkOrInstr::Marker(self.get_scope_name().clone()+".ELSE"));
 
-                    self.compile_statements(vec![*no], &mut instr, &mut instr_fn)?;
+                    self.compile_statements(vec![*no],instr,instr_fn)?;
 
-                    instr.push(MkOrInstr::Marker(self.get_scope_name()+".END"));
+                    instr.push(MkOrInstr::Marker(self.get_scope_name().clone()+".END"));
                     self.pop_scope();
                 }
-                Statement::While{condition,code} => {
+                Statement::While{mut condition,code} => {
                     // open up while scope
                     // add computations for computing expression
                     // add conditional JUMP to end of scope
@@ -510,18 +511,18 @@ impl<SC> Environment<SC> {
                     // pop scope
                     self.create_subscope(format!("{}",cnt_while),ScopeVariant::Loop);
                     cnt_while+=1;
-                    instr.push(MkOrInstr::Marker(self.get_scope_name()+".START"));
+                    instr.push(MkOrInstr::Marker(self.get_scope_name().clone()+".START"));
 
                     self.preprocess_expr(&mut condition)?;
 
-                    let (reg,tv) = self.compile_expr(&condition,&mut instr,None)?;
-                    instr.push(MkOrInstr::Instr(Instr::JumpUnless{index:self.get_scope_name()+".END",condition:reg}));
+                    let (reg,tv) = self.compile_expr(condition,instr,None)?;
+                    instr.push(MkOrInstr::Instr(Instr::JumpUnless{index:self.get_scope_name().clone()+".END",condition:reg}));
                     self.release_tmp(tv);
 
-                    self.recursive_compile(vec![*code],&mut instr, &mut instr_fn)?;
-                    instr.push(MkOrInstr::Instr(Instr::Jump{index:self.get_scope_name()+".START"}));
+                    self.compile_statements(vec![*code],instr,instr_fn)?;
+                    instr.push(MkOrInstr::Instr(Instr::Jump{index:self.get_scope_name().clone()+".START"}));
                     
-                    instr.push(MkOrInstr::Marker(self.get_scope_name()+".END"));
+                    instr.push(MkOrInstr::Marker(self.get_scope_name().clone()+".END"));
                     
                     self.pop_scope();
                 }
@@ -533,12 +534,12 @@ impl<SC> Environment<SC> {
                     // add JUMP to start of current scope
                     self.create_subscope(format!("{}",cnt_loop),ScopeVariant::Loop);
                     cnt_loop+=1;
-                    instr.push(MkOrInstr::Marker(self.get_scope_name()+".START"));
+                    instr.push(MkOrInstr::Marker(self.get_scope_name().clone()+".START"));
 
-                    self.compile_statements(vec![*code],&mut instr, &mut instr_fn)?;
-                    instr.push(MkOrInstr::Instr(Instr::Jump{index:self.get_scope_name()+".START"}));
+                    self.compile_statements(vec![*code],instr,instr_fn)?;
+                    instr.push(MkOrInstr::Instr(Instr::Jump{index:self.get_scope_name().clone()+".START"}));
 
-                    instr.push(MkOrInstr::Marker(self.get_scope_name()+".END"));
+                    instr.push(MkOrInstr::Marker(self.get_scope_name().clone()+".END"));
                     self.pop_scope();
                 }
                 Statement::Break => {
@@ -575,18 +576,18 @@ impl<SC> Environment<SC> {
                     }
                     let fn_name = fn_scope.name.clone();
 
-                    let (reg,tv) = self.compile_expr(&value, &mut instr,None)?;
+                    let (reg,tv) = self.compile_expr(value,instr,None)?;
                     self.release_tmp(tv);
                     instr.push(MkOrInstr::Instr(Instr::Return{stack:fn_name,value:reg}));
                 }
 
-                Statement::Expr(expr) => {
+                Statement::Expr(mut expr) => {
                     // just an expression not assigned to a variable (mostly function calls)
                     // basically the same as variable assignment
                     // but use fake target address
                     // also, ignore if expr is constant
                     self.preprocess_expr(&mut expr)?;
-                    self.compile_expr(&mut instr, &expr,Some(Reg::Const(0)))?;
+                    self.compile_expr(expr,instr,Some(Reg::Const(0)))?;
                 }
 
                 Statement::CodeBlock(statements) => {
@@ -598,7 +599,7 @@ impl<SC> Environment<SC> {
                     self.create_subscope(format!("{}",cnt_blk),ScopeVariant::Block);
                     cnt_blk+=1;
 
-                    self.compile_statements(statements,&mut instr, &mut instr_fn)?;
+                    self.compile_statements(statements,instr,instr_fn)?;
 
                     self.pop_scope();
                 }
@@ -624,29 +625,29 @@ impl<SC> Environment<SC> {
                     
                     // make scope
                     self.create_fn_scope(name);
-                    let mut scope = self.scopes.last_mut().unwrap();
-                    instr_fn.push(MkOrInstr::Marker(self.get_scope_name()+".START"));
+                    instr_fn.push(MkOrInstr::Marker(self.get_scope_name().clone()+".START"));
 
+                    let scope = self.scopes.last_mut().unwrap();
                     // add params
                     for param in params.into_iter() {
-                        match param {
-                            FnParam::Value(name) =>
+                        match param.variant {
+                            FnParamVariant::Value =>
                                 scope.insert_ident(
-                                    name,
+                                    param.name,
                                     IdentifierVariant::Variable{
                                         reg:Reg::Var(StackRef::Rel(-(scope.stack_vars as i32))),
                                         r#type:None}).unwrap(),
-                            FnParam::Reference(name) =>
+                            FnParamVariant::Reference =>
                                 scope.insert_ident(
-                                    name,
+                                    param.name,
                                     IdentifierVariant::Variable{
                                         reg:Reg::VarRef(StackRef::Rel(-(scope.stack_vars as i32))),
                                         r#type:None}).unwrap(),
-                            FnParam::Array(name) =>
+                            FnParamVariant::Array =>
                                 scope.insert_ident(
-                                    name,
+                                    param.name,
                                     IdentifierVariant::Array{
-                                        reg:Reg::ArrayRef(StackRef::Rel(-(scope.stack_vars as i32))),
+                                        reg:ArrayReg::ArrayRef(StackRef::Rel(-(scope.stack_vars as i32))),
                                         r#type:None}).unwrap(),
                         }
                         scope.stack_vars+=1;
@@ -655,8 +656,8 @@ impl<SC> Environment<SC> {
 
                     // parse code and add to functions
                     let mut instr_fn2 = Vec::new();
-                    self.recursive_compile(code, &mut instr_fn,&mut instr_fn2)?;
-                    instr_fn.push(MkOrInstr::Marker(self.get_scope_name()+".END")); //mark end
+                    self.compile_statements(code,instr_fn,&mut instr_fn2)?;
+                    instr_fn.push(MkOrInstr::Marker(self.get_scope_name().clone()+".END")); //mark end
                     
                     self.fn_sizes.insert(self.get_scope_name().clone(),self.scopes.last().unwrap().stack_max); //register size
                     self.pop_scope();
@@ -684,20 +685,20 @@ impl<SC> Environment<SC> {
 
     /// Preprocess expression: reduce to constants where possible, and check identifiers.
     /// For functions/syscalls, also check if function parameters match descriptions.
-    pub fn preprocess_expr(&mut self,expr:&mut Expr)-> Result<(),Error> { //TODO: mut borrow expr, and change in place??? probably better; requires less cloning
+    pub fn preprocess_expr(&self,expr:&mut Expr)-> Result<(),Error> { //TODO: mut borrow expr, and change in place??? probably better; requires less cloning
         match expr {
-            Expr::Num(x) => {}//Ok(Expr::Num(*x)),
+            Expr::Num(_) => {}//Ok(Expr::Num(*x)),
             Expr::Op{op,lhs,rhs} => {
                 self.preprocess_expr(lhs)?;
                 self.preprocess_expr(rhs)?;
 
-                if let (Expr::Num(x),Expr::Num(y)) = (&lhs,&rhs) {
+                if let (Expr::Num(x),Expr::Num(y)) = (&**lhs,&**rhs) {
                     *expr = Expr::Num(op.eval(*x,*y)?);
                 }
             }
             Expr::Unary{op,rhs} => {
                 self.preprocess_expr(rhs)?;
-                if let Expr::Num(y) = rhs {
+                if let Expr::Num(y) = **rhs {
                     *expr = Expr::Num(op.eval(y))
                 }
             }
@@ -705,25 +706,25 @@ impl<SC> Environment<SC> {
                 match self.find_ident(name) {
                     Some(Identifier{variant:IdentifierVariant::Constant{value,..},..}) => *expr=Expr::Num(*value),
                     Some(Identifier{variant:IdentifierVariant::Variable{..},..}) => {}
-                    _ => Err(format!("'{name}' does not name a variable or constant in scope '{}'",self.get_scope_name())),
+                    _ => return Err(format!("'{name}' does not name a variable or constant in scope '{}'",self.get_scope_name())),
                 }
             }
             Expr::EnumVariant{name,variant} => {
                 match self.find_ident(name) {
                     Some(Identifier{name,variant:IdentifierVariant::Enum{variants}}) => {
-                        match variants.get(&variant) {
+                        match variants.get(variant) {
                             Some(value) => *expr=Expr::Num(*value),
-                            _ => Err(format!("Variant '{variant}' not found in enum '{name}'"))
+                            _ => return Err(format!("Variant '{variant}' not found in enum '{name}'"))
                         }
                     },
-                    _ => Err(format!("'{name}' does not name an enum in scope '{}'",self.get_scope_name())),
+                    _ => return Err(format!("'{name}' does not name an enum in scope '{}'",self.get_scope_name())),
                 }
             }
             Expr::ArrayIndex{name,index} => {
                 match self.find_ident(name) {
                     Some(Identifier{variant:IdentifierVariant::Array{..},..}) => 
-                        self.preprocess_expr(index),
-                    _ => Err(format!("'{name}' does not name an array in scope '{}'",self.get_scope_name())),
+                        self.preprocess_expr(index)?,
+                    _ => return Err(format!("'{name}' does not name an array in scope '{}'",self.get_scope_name())),
                 }
             }
             Expr::FnCall{name,args} => {
@@ -764,7 +765,7 @@ impl<SC> Environment<SC> {
                             }
                         }).collect::<Result<Vec<FnParamVariant>,CompileError>>()?;
 
-                        self.check_fn_params(params.iter().map(|param| param.variant),arg_variants)?;
+                        Environment::<SC>::check_fn_args(&params.iter().map(|param| param.variant).collect(),&arg_variants)?;
                     }
                     Some(Identifier{variant:IdentifierVariant::SysCall{param_check,..},..}) => {
                         // same code as function; somehow merge the two? TODO; only final check is different
@@ -782,12 +783,13 @@ impl<SC> Environment<SC> {
                         }).collect::<Result<Vec<FnParamVariant>,CompileError>>()?;
 
                         match param_check {
-                            SysCallParamCheck::Pattern(p) => self.check_fn_params(p,arg_variants)?,
-                            SysCallParamCheck::Match(check) => check(arg_variants)?,
+                            SysCallParamCheck::Pattern(p) =>
+                                Environment::<SC>::check_fn_args(&p.iter().map(|param| param.variant).collect(),&arg_variants)?,
+                            SysCallParamCheck::Match(check) => check(&arg_variants)?,
                             SysCallParamCheck::Runtime => {}
                         }
                     }
-                    _ => Err(format!("{name} does not name a function in scope {}",self.get_scope_name())),
+                    _ => return Err(format!("{name} does not name a function in scope {}",self.get_scope_name())),
                 }
             }
         }
@@ -796,10 +798,10 @@ impl<SC> Environment<SC> {
 
     /// Attempt to evaluate expression as a constant, given a list of scopes.
     /// This includes the preprocessing step.
-    pub fn compile_const_expr(&self,expr:&mut Expr) -> Result<i32,CompileError> {
-        let expr = self.preprocess_expr(expr)?;
+    pub fn compile_const_expr(&mut self,expr:&mut Expr) -> Result<i32,CompileError> {
+        self.preprocess_expr(expr)?;
         if let Expr::Num(x) = expr {
-            Ok(x)
+            Ok(*x)
         } else {
             Err(format!("Expression {expr:?} cannot be computed as a constant"))
         }
@@ -814,13 +816,13 @@ impl<SC> Environment<SC> {
     fn compile_expr(
         &mut self,
         expr:Expr,
-        instr: &Vec<MkOrInstr<SC>>,
+        instr: &mut Vec<MkOrInstr<SC>>,
         dest:Option<Reg> /* memory location to store result in */
     ) -> Result<(Reg,Option<Reg>),Error> {
         // debug!(" > CALC EXPR {:?}",expr);
 
         /// Get destination (either the original dest, or a temporary variable)
-        fn get_reg<SC>(env:&mut Environment<SC>,reg:Option<Reg>) -> (Reg,Option<usize>) {
+        fn get_reg<SC:Clone+std::fmt::Debug>(env:&mut Environment<SC>,reg:Option<Reg>) -> (Reg,Option<Reg>) {
             if let Some(r) = reg {
                 (r,None)
             } else {
@@ -832,10 +834,10 @@ impl<SC> Environment<SC> {
         Ok(match expr {
             Expr::Num(x) => {
                 if let Some(r)=dest {
-                    instr.push(MkOrInstr::Instr(Instr::UnaryOperator{op:UnaryOperator::Nop,rhs:Reg::Const(*x),res:r}));
+                    instr.push(MkOrInstr::Instr(Instr::UnaryOperator{op:UnaryOperator::Nop,rhs:Reg::Const(x),res:r}));
                     (r,None) // store constant in reg
                 } else {
-                    (Reg::Const(*x),None) //just return the constant
+                    (Reg::Const(x),None) //just return the constant
                 }
             }
             Expr::Variable(name) => {
@@ -853,31 +855,31 @@ impl<SC> Environment<SC> {
                 }
             }
             Expr::Op{op,lhs,rhs} => {
-                let (reg_lhs,tmp_lhs) = self.compile_expr(lhs,&mut instr,None)?;
-                let (reg_rhs,tmp_rhs) = self.compile_expr(rhs,&mut instr,None)?;
+                let (reg_lhs,tmp_lhs) = self.compile_expr(*lhs,instr,None)?;
+                let (reg_rhs,tmp_rhs) = self.compile_expr(*rhs,instr,None)?;
                 self.release_tmp(tmp_rhs);
                 self.release_tmp(tmp_lhs);
                 
-                let (reg,tv) = get_reg(&mut self,dest);
+                let (reg,tv) = get_reg(self,dest);
 
-                instr.push(MkOrInstr::Instr(Instr::BinaryOperator{op:*op,lhs:reg_lhs,rhs:reg_rhs,res:reg}));
+                instr.push(MkOrInstr::Instr(Instr::BinaryOperator{op,lhs:reg_lhs,rhs:reg_rhs,res:reg}));
                 (reg,tv)
             },
             Expr::Unary{op,rhs} => {
-                let (reg_rhs,tmp_rhs) = self.compile_expr(rhs,&mut instr,None)?;
+                let (reg_rhs,tmp_rhs) = self.compile_expr(*rhs,instr,None)?;
                 self.release_tmp(tmp_rhs);
                 
-                let (reg,tv) = get_reg(&mut self,dest);
+                let (reg,tv) = get_reg(self,dest);
             
-                instr.push(MkOrInstr::Instr(Instr::UnaryOperator{op:*op,rhs:reg_rhs,res:reg}));
+                instr.push(MkOrInstr::Instr(Instr::UnaryOperator{op,rhs:reg_rhs,res:reg}));
                 (reg,tv)
             },
             Expr::ArrayIndex{name,index} => {
                 // compute index, add indexing instr
-                let (reg_index,tmp_index) = self.compile_expr(index,&mut instr,None)?;
+                let (reg_index,tmp_index) = self.compile_expr(*index,instr,None)?;
                 self.release_tmp(tmp_index);
                 
-                let (reg,tv) = get_reg(&mut self,dest);
+                let (reg,tv) = get_reg(self,dest);
 
                 let array = match self.find_ident(&name) {
                     Some(Identifier{variant:IdentifierVariant::Array{reg:r,..},..}) => *r,
@@ -902,34 +904,34 @@ impl<SC> Environment<SC> {
                 let mut tmp_vars:Vec<Option<Reg>> = Vec::new(); //to store temp vars
             
                 // get function
-                let fnid = self.find_ident(&name).unwrap();//.clone();
+                let fnid = self.find_ident(&name).unwrap().clone();
 
                 // split between sys call and function call
                 match fnid {
                     Identifier{variant:IdentifierVariant::Function{params},..} => {
                         // map arguments to parameters
-                        let params = args.iter().zip(params.iter()).map(|(val,param)| 
-                            Ok::<FnArg,CompileError>(match param {
-                                FnParam::Value(_) => {
+                        let params = args.into_iter().zip(params.iter()).map(|(val,param)| 
+                            Ok::<FnArg,CompileError>(match param.variant {
+                                FnParamVariant::Value => {
                                     // argument can be any expression
-                                    let (reg,tv) = self.compile_expr(val,&mut instr,None)?;
+                                    let (reg,tv) = self.compile_expr(val,instr,None)?;
                                     tmp_vars.push(tv);
                                     FnArg::Val(reg)
                                 }
-                                FnParam::Reference(_) => {
+                                FnParamVariant::Reference => {
                                     // argument must be a variable(name) where name refers to any (ref)variable
                                     if let Expr::Variable(name) = val {
-                                        match self.find_ident(name).unwrap() {
+                                        match self.find_ident(&name).unwrap() {
                                             Identifier{variant:IdentifierVariant::Variable{reg,..},..} =>
                                                 FnArg::VarRef(*reg),
                                             _=>unreachable!(),
                                         }
                                     } else {unreachable!();}
                                 }
-                                FnParam::Array(_) => {
+                                FnParamVariant::Array => {
                                     // argument must be Variable(name) where name refers to an array
                                     if let Expr::Variable(name) = val {
-                                        match self.find_ident(name).unwrap() {
+                                        match self.find_ident(&name).unwrap() {
                                             Identifier{variant:IdentifierVariant::Array{reg,..},..} =>
                                                 FnArg::ArrayRef(*reg),
                                             _=>unreachable!(),
@@ -940,23 +942,23 @@ impl<SC> Environment<SC> {
                         ).collect::<Result<Vec<FnArg>,_>>()?;
         
                         // free variables
-                        for tv in tmp_vars.iter().rev() {self.release_tmp(tv);}
+                        for tv in tmp_vars.into_iter().rev() {self.release_tmp(tv);}
                         
-                        let (reg,tv) = get_reg(&mut self,dest);
+                        let (reg,tv) = get_reg(self,dest);
                         instr.push(MkOrInstr::Instr(Instr::FnCall { index: fnid.name.clone()+".START", params, res: reg, stack: fnid.name.clone() }));
                         (reg,tv)
                     },
-                    Identifier{variant:IdentifierVariant::SysCall { param_check, call },..} => {
+                    Identifier{variant:IdentifierVariant::SysCall {  call,.. },..} => {
                         // same code as function; somehow merge the two? TODO; only final check is different
-                        let params = args.iter_mut().map(|arg| {
+                        let params = args.into_iter().map(|arg| {
                             Ok(if let Expr::Variable(var) = arg {
-                                match self.find_ident(var) {
-                                    Some(Identifier{variant:IdentifierVariant::Array{reg,..},..}) => FnArg::ArrayRef(reg),
-                                    Some(Identifier{variant:IdentifierVariant::Variable{reg,..},..}) => FnArg::VarRef(reg),
+                                match self.find_ident(&var) {
+                                    Some(Identifier{variant:IdentifierVariant::Array{reg,..},..}) => FnArg::ArrayRef(*reg),
+                                    Some(Identifier{variant:IdentifierVariant::Variable{reg,..},..}) => FnArg::VarRef(*reg),
                                     _=>unreachable!(),
                                 }
                             } else {
-                                let (reg,tv) = self.compile_expr(arg,&mut instr,None)?;
+                                let (reg,tv) = self.compile_expr(arg,instr,None)?;
                                 tmp_vars.push(tv);
                                 FnArg::Val(reg)
                             })
@@ -964,10 +966,10 @@ impl<SC> Environment<SC> {
 
 
                         // free variables
-                        for tv in tmp_vars.iter().rev() { self.release_tmp(tv);}
+                        for tv in tmp_vars.into_iter().rev() { self.release_tmp(tv);}
 
-                        let (reg,tv) = get_reg(&mut self,dest);
-                        instr.push(MkOrInstr::Instr(Instr::SystemCall {params, res:reg, call:name}));
+                        let (reg,tv) = get_reg(self,dest);
+                        instr.push(MkOrInstr::Instr(Instr::SystemCall {params, res:reg, call:call.clone()}));
 
                         (reg,tv)
                     }
@@ -1038,14 +1040,14 @@ impl<SC> Environment<SC> {
 
     /// Pop top scope and let it be absorbed by its parent
     fn pop_scope(&mut self,) {
-        let scope = self.scopes.pop();
+        let scope = self.scopes.pop().unwrap();
         assert!(scope.tmp_vars.len()==scope.stack_tmp,"Attempt to close scope before all temp vars are released");
         self.scopes.last_mut().unwrap().absorb_subscope(scope);
     }
 
     /// Return top scope matching any of the supplied scope variants
     /// Stop after finding a function scope
-    pub fn find_scope_variant<'a>(&self,variants:&[ScopeVariant]) -> Option<&'a Scope<SC>> {
+    fn find_scope_variant<'a>(&'a self,variants:&[ScopeVariant]) -> Option<&'a Scope<SC>> {
         for scope in self.scopes.iter().rev() {
             if variants.contains(&scope.variant) {
                 return Some(scope);
@@ -1105,7 +1107,13 @@ impl<SC> Environment<SC> {
 // public access
 
     /// Create new instance
-    pub fn new() -> Self {todo!()}
+    pub fn new() -> Self {
+        Self {
+            scopes: Vec::new(),
+            fn_sizes: HashMap::new(),
+            global_size: 0
+        }
+    }
     /// Create base scope from scratch, with no variables
     pub fn create_basescope(&mut self, name:String) -> &mut Self {
         self.scopes.push(Scope::new_base_scope(name));
@@ -1152,8 +1160,8 @@ impl<SC> Environment<SC> {
         let mut markers:HashMap<String,usize> = HashMap::new();
     
         let mut i:usize = 0;
-        for MkOrInstr in instr.iter() {
-            match MkOrInstr {
+        for mk_instr in instr.iter() {
+            match mk_instr {
                 MkOrInstr::Marker(m) => {markers.insert(m.clone(),i);}
                 MkOrInstr::Instr(_) => {i+=1;}
             }
@@ -1181,7 +1189,7 @@ impl<SC> Environment<SC> {
 // helper functions
 
     /// Helper function for comparing function arguments with the list of required parameters
-    pub fn check_fn_args(params:Vec<FnParamVariant>,args:Vec<FnParamVariant>) -> Result<(),CompileError> {
+    pub fn check_fn_args(params:&Vec<FnParamVariant>,args:&Vec<FnParamVariant>) -> Result<(),CompileError> {
         if params.len() != args.len() {
             return Err(format!("Expected {} arguments for function, got {}",params.len(),args.len()));
         }
@@ -1219,7 +1227,7 @@ impl<SC> Environment<SC> {
 
 ////////// SCOPES
 
-impl<SC> Scope<SC> {
+impl<SC: Clone+std::fmt::Debug> Scope<SC> {
 // subscopes
     pub fn new_base_scope(name:String) -> Self {
         Self {
@@ -1250,7 +1258,7 @@ impl<SC> Scope<SC> {
     }
     /// Create function subscope
     pub fn create_fn_scope(&self, name:String) -> Self {
-        let mut scope = self.create_sub(name,ScopeVariant::Function);
+        let mut scope = self.create_subscope(name,ScopeVariant::Function);
         scope.stack_vars = 2; // PC + return addr
         scope.stack_max = 2;
         scope.global=false;
@@ -1317,8 +1325,8 @@ impl FnArg {
     fn absshift(self,shift:i32) -> Self {
         match self {
             FnArg::Val(r) => FnArg::Val(r.absshift(shift)),
-            FnArg::VarRef(r) => FnArg::VarReg(r.absshift(shift)),
-            FnArg::ArrayRef(r) => FnArg::ArrayReg(r.absshift(shift)),
+            FnArg::VarRef(r) => FnArg::VarRef(r.absshift(shift)),
+            FnArg::ArrayRef(r) => FnArg::ArrayRef(r.absshift(shift)),
         }
     }
 }
@@ -1338,8 +1346,8 @@ impl ArrayReg {
     /// Shift all absolute references
     fn absshift(self,shift:i32) -> Self {
         match self {
-            Reg::Array(sr, sz) => Reg::Array(sr.absshift(shift),sz),
-            Reg::ArrayRef(sr) => Reg::ArrayRef(sr.absshift(shift)),
+            ArrayReg::Array(sr, sz) => ArrayReg::Array(sr.absshift(shift),sz),
+            ArrayReg::ArrayRef(sr) => ArrayReg::ArrayRef(sr.absshift(shift)),
         }
     }
 }
