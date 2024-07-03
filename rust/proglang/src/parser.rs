@@ -7,15 +7,26 @@ use crate::operators::{BinaryOperator as BOp,UnaryOperator as UOp};
 
 
 // TODO: add type annotation for function parameters
-
+// TODO: add type annotation for constants
+// TODO: add array slicing
+// TODO: add strings for system calls (i.e. print; not really anything also but we could add debug prints etc.)
 
 
 #[derive(Clone,Debug)]
-pub enum FnParam {
-    Value(String),
-    Reference(String),
-    Array(String),
+pub struct FnParam {
+    pub name: String,
+    pub variant: FnParamVariant,
 }
+
+#[derive(Clone,Debug)]
+pub enum FnParamVariant {
+    Value,
+    Reference,
+    Array,
+}
+
+
+
 
 #[derive(Clone, Debug)]
 pub enum Statement {
@@ -210,9 +221,9 @@ pub fn parser() -> impl Parser<char, Vec<Statement>, Error=Simple<char>> {
             .padded();
 
 
-        let fnparam = text::ident().then_ignore(just("[]")).map(|s| FnParam::Array(s)) //array
-            .or(just('&').ignore_then(text::ident()).map(FnParam::Reference as fn(_)->_)) //var by ref
-            .or(text::ident().map(|s|FnParam::Value(s)))
+        let fnparam = text::ident().then_ignore(just("[]")).map(|s| FnParam{name:s,variant:FnParamVariant::Array}) //array
+            .or(just('&').ignore_then(text::ident()).map(|s| FnParam{name:s,variant:FnParamVariant::Reference})) //var by ref
+            .or(text::ident().map(|s|FnParam{name:s,variant:FnParamVariant::Value}))
             .padded(); //var
 
         let fndef = text::keyword("fn").ignore_then(text::whitespace())

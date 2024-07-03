@@ -9,7 +9,7 @@ mod cpu;
 use parser::parser;
 use chumsky::Parser;
 
-use compiler::compile;
+use compiler::Environment;
 use cpu::{CPU,SysCall};
 
 struct SC {}
@@ -23,7 +23,7 @@ fn main() {
     let parsed = parser().parse(src);
     println!("PARSED:\n{:#?}",parsed);
 
-    let instr = compile(parsed.unwrap());
+    let instr = Environment::new().compile(parsed.unwrap());
     println!("INSTR:\n{:#?}",instr);
     let instr=instr.unwrap();
 

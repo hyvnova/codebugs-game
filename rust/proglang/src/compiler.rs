@@ -38,7 +38,7 @@ Expression parsing happens in two steps as well:
 
 
 During the compilation process, stack sizes and instruction indices are not yet known.
-Therefore, a final post processing step is executed, in which these are replaced by actual numbers.
+Therefore, a final post-processing step is executed, in which these are replaced by actual numbers.
 This includes:
 - shifting the absolute stack references by the stack size of the global scope
 - replacing the stack sizes in function calls/return statements with the correct size
@@ -54,103 +54,95 @@ Operands of instructions are Regs. These are sources of data (constants, variabl
 use std::collections::HashMap;
 use log::debug;
 
-use crate::parser::{Statement,Expr,FnParam};
+use crate::parser::{Statement,Expr,FnParam,FnParamVariant};
 use crate::operators::{UnaryOperator,BinaryOperator};
 
 const MAX_ARRAY_LEN:usize=512;
 
 type Error = String;
+type CompileError = String;
 
 
+
+
+
+
+
+
+
+/// Function argument
+/// Can be Value, VarRef, ArrayRef
 #[derive(Debug,Clone)]
-pub struct FnArg {
-    pub reg:Reg,
-    pub mode:FnArgMode,
+pub enum FnArg {
+    Val(Reg),
+    VarRef(Reg),
+    ArrayRef(ArrayReg),
 }
 
-#[derive(Debug,Clone)]
-pub enum FnArgMode {Value,Reference}
-
-
+// Marker or Instruction
 #[derive(Debug)]
-enum MkInstr {
-    Instr(Instr<String,String>),
+enum MkOrInstr<SC> {
+    Instr(Instr<String,String,SC>),
     Marker(String),
 }
 
-
+// Instructions
 #[derive(Debug,Clone)]
-pub enum Instr<L,SC> {
-    BinaryOperator{op:BinaryOperator,lhs:Reg,rhs:Reg,res:Reg},
-    UnaryOperator{op:UnaryOperator,rhs:Reg,res:Reg},
-    ArrayIndex{array:Reg,index:Reg,res:Reg},
-    ArrayAssign{array:Reg,index:Reg,value:Reg},
-    Jump{index:L},
-    JumpUnless{index:L,condition:Reg},
-    FnCall{index:L, params:Vec<FnArg>, res:Reg, stack:L}, //index is full marker string, i.e. @root::@fn_foo
-    SystemCall{params:Vec<FnArg>, res:Reg, call:SC}, //todo
-    Return{stack:L,value:Reg},
-    Init{stack:L,index:L},
+pub enum Instr<ProgramIndex,StackSize,SystemCall> {
+    BinaryOperator{ // operator with two arguments
+        op:BinaryOperator,
+        lhs:Reg,
+        rhs:Reg,
+        res:Reg
+    },
+    UnaryOperator{ // operator with one argument
+        op:UnaryOperator,
+        rhs:Reg,
+        res:Reg
+    },
+    ArrayIndex{ // indexing an array
+        array:ArrayReg,
+        index:Reg,
+        res:Reg
+    },
+    ArrayAssign{ // assigning a value to an index in an array
+        array:ArrayReg,
+        index:Reg,
+        value:Reg
+    },
+    Jump{ // jump to index
+        index:ProgramIndex,
+    },
+    JumpUnless{ // jump to index if condition is 0
+        index:ProgramIndex,
+        condition:Reg,
+    },
+    FnCall{ // function call
+        index:ProgramIndex,
+        stack:StackSize,
+        params:Vec<FnArg>,
+        res:Reg,
+    },
+    SystemCall{ // like a function call, but is executed outside of 
+        call:SystemCall,
+        params:Vec<FnArg>,
+        res:Reg,
+    },
+    Return{ // write value of Reg to location in Rel(-1), then pop <stack> from stack
+        stack:StackSize,
+        value:Reg,
+    },
+    Init{ // initialise stack size and indu
+        stack:StackSize,
+        index:ProgramIndex,
+    },
 }
 
-impl Instr<String,String> {
-    fn fill_markers(self,markers:&HashMap<String,usize>,fnsizes:&HashMap<String,usize>,absshift:i32) -> Instr<usize,String> {
-        match self {
-            Instr::Jump{index} => Instr::Jump{index:*markers.get(&index).unwrap()},
-            Instr::JumpUnless{index,condition} =>
-                Instr::JumpUnless{index:*markers.get(&index).unwrap(),condition:condition.absshift(absshift)},
-            Instr::FnCall{index,params,res,stack} => 
-                Instr::FnCall{
-                    index:*markers.get(&index).unwrap(),//_or_else(|| {debug!("{:?} {:?}",markers,index);panic!()}),
-                    params:params.into_iter().map(|x| FnArg{reg:x.reg.absshift(absshift),mode:x.mode}).collect(),
-                    res:res.absshift(absshift),
-                    stack:*fnsizes.get(&stack).unwrap(), //unwrap_or_else(|| {debug!("{:?} {}",fnsizes,stack);panic!()}),
-                },
-            Instr::SystemCall{params,res,call} => 
-                Instr::SystemCall{
-                    params:params.into_iter().map(|x| FnArg{reg:x.reg.absshift(absshift),mode:x.mode}).collect(),
-                    res:res.absshift(absshift),
-                    call:call,
-                },
 
-            Instr::Return { stack, value } =>
-                Instr::Return { stack:*fnsizes.get(&stack).unwrap(), value:value.absshift(absshift) }, // get stack size of function by name
 
-            //i => i as Instr<usize>,
-            Instr::ArrayAssign { array, index, value } =>
-                Instr::ArrayAssign { array, index:index.absshift(absshift), value:value.absshift(absshift) },
-            Instr::ArrayIndex { array, index, res } =>
-                Instr::ArrayIndex { array, index:index.absshift(absshift), res:res.absshift(absshift) },
-            Instr::BinaryOperator { op, lhs, rhs, res } =>
-                Instr::BinaryOperator { op, lhs:lhs.absshift(absshift), rhs:rhs.absshift(absshift), res:res.absshift(absshift) },
-            Instr::UnaryOperator { op, rhs, res } =>
-                Instr::UnaryOperator { op, rhs:rhs.absshift(absshift), res:res.absshift(absshift) },
 
-            Instr::Init{stack, index} => Instr::Init{stack:*fnsizes.get(&stack).unwrap(),index:*markers.get(&index).unwrap()},
-        }
-    }
-}
 
-#[derive(Debug, Clone, Copy)]
-pub enum Reg {
-    Const(i32), //constant value. storing at this address does nothing
-    Var(StackRef), //take value at this place
-    VarRef(StackRef), //take value at place stored in this place
-    Array(StackRef,usize), //array starting at this place with this length
-    ArrayRef(StackRef), //.... the array pointed to by this place
-}
 
-impl Reg {
-    pub fn absshift(self,shift:i32) -> Self {
-        match self {
-            Reg::Const(x) => Reg::Const(x),
-            Reg::Var(sr) => Reg::Var(sr.absshift(shift)),
-            Reg::VarRef(sr) => Reg::VarRef(sr.absshift(shift)),
-            Reg::Array(sr, sz) => Reg::Array(sr.absshift(shift),sz),
-            Reg::ArrayRef(sr) => Reg::ArrayRef(sr.absshift(shift)),
-        }
-    }
-}
 
 /*
 
@@ -158,6 +150,7 @@ get value:
     const(x)    x
     var(a)      mem[a]
     varref(a)   mem[mem[a]]
+
     array(a,n)  mem[a:+n]
     arref(a)    mem[mem[a]:+n]
 
@@ -169,25 +162,35 @@ get reference:
     const(x)    impossible
     var(a)      a
     varref(a)   mem[a]
+    
     array(a,n)  (a,n)
     arref(a)    mem[a].split()
 
 */
 
 #[derive(Debug, Clone, Copy)]
+pub enum Reg {
+    Const(i32), //constant value. storing at this address does nothing
+    Var(StackRef), //take value at this place
+    VarRef(StackRef), //take value at place stored in this place
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum ArrayReg {
+    Array(StackRef,usize), //array starting at this place with this length
+    ArrayRef(StackRef), // Array pointed to by this place; upper 16bits denote array length
+}
+
+/// Reference to value on stack
+#[derive(Debug, Clone, Copy)]
 pub enum StackRef {
     Rel(i32), // relative to top of stack
     Abs(i32), // stack index
 }
 
-impl StackRef {
-    pub fn absshift(self,shift:i32) -> Self {
-        match self {
-            StackRef::Rel(x) => StackRef::Rel(x),
-            StackRef::Abs(x) => StackRef::Abs(x+shift),
-        }
-    }
-}
+
+
+
 
 
 
@@ -197,33 +200,30 @@ impl StackRef {
 
 
 #[derive(Debug,Clone)]
-pub struct Identifier {
-    name: String, // full name, ie @root::@fn_foo
-    variant: IdentifierVariant,
+pub struct Identifier<SystemCall> {
+    name: String, // full name, ie @root::foo::@if_0::bar
+    variant: IdentifierVariant<SystemCall>,
 }
 
 #[derive(Debug,Clone)]
-pub enum IdentifierVariant {
+pub enum IdentifierVariant<SystemCall> {
     Variable{
-        r#type:Option<String>,
+        r#type:Option<String>, //type will be used later for display purposes, but is otherwise unused
         reg:Reg,
     },
-    // VariableRef{
-    //     reg:Reg,
-    // },
     Array{
         r#type:Option<String>,
-        // size:usize,
-        reg:Reg,
+        reg:ArrayReg,
     },
-    // ArrayRef{
-    //     reg:Reg,
-    // },
     Function{
-        params:Vec<FnParam>,
-        sys: bool,
+        params:Vec<FnParam>, //TODO: FnParam rework? currently just val/ref/array, without type
+    },
+    SysCall{
+        param_check:SysCallParamCheck,
+        call: SystemCall, // associated system call data
     },
     Constant{
+        r#type:Option<String>,
         value:i32,
     },
     Enum{
@@ -231,9 +231,11 @@ pub enum IdentifierVariant {
     }
 }
 
-
-
-
+pub enum SysCallParamCheck {
+    Pattern(Vec<FnParam>),
+    Match(fn(&Vec<FnArg>) -> Result<(),Error>),
+    Runtime,
+}
 
 
 #[derive(Debug,Clone,Copy,PartialEq)]
@@ -258,20 +260,1013 @@ impl ScopeVariant {
     }
 }
 
-pub struct Scope {
+struct Scope<SystemCall> {
     name: String,
     global: bool,
-    identifiers: HashMap<String,Identifier>,
+    identifiers: HashMap<String,Identifier<SystemCall>>,
     variant: ScopeVariant,
-    tmp_vars: Vec<usize>,
-    variables: usize,
-    max_variables: usize,
+    
+    stack_vars:usize, //amount of stack space allocated for variables, arrays etc., including those of parent scopes
+    stack_tmp:usize, //extra space required for temporary variables
+    stack_max:usize, //maximum total stack size at any moment
+    tmp_vars: Vec<Reg>, //temporary variables that are currently available
 }
 
 
-impl Scope {
+pub struct Environment<SC> {
+    scopes: Vec<Scope<SC>>,
+    fn_sizes: HashMap<String,usize>, //stack size per function
+    global_size: usize, //stack size of root
+}
+
+
+impl<SC> Environment<SC> {
+// compilation:
+
+    /// Compile statements into current scope
+    /// Instructions are added to `instr`.
+    /// Instructions for nested function definitions are added to `instr_fn`.
+    fn compile_statements(
+        &mut self,
+        mut statements:Vec<Statement>,
+        instr:&mut Vec<MkOrInstr<SC>>,
+        instr_fn:&mut Vec<MkOrInstr<SC>>
+    ) -> Result<(),Error> {
+        debug!("Starting compilation of scope {}",&self.get_scope_name());
+
+        // Register definitions
+        self.register_definition_statements(&statements)?;
+
+        // Compile statements
+        self.compile_action_statements(statements, instr, instr_fn)?;
+
+        debug!("Finished compiling scope");
+        // return stuff
+        Ok(())
+    }
+
+
+    /// Register definitions of statements
+    fn register_definition_statements(&mut self, statements:&Vec<Statement>) -> Result<(),CompileError> {
+        // first, register all elements in the current scope
+        // should we do this? just functions maybe?
+        for statement in statements.iter_mut() {
+            debug!("Precompiling statement {:?}",statement);
+            match statement {
+                Statement::VarDef{vars,r#type} => {
+                    // put variables into top scope
+                    let scope = self.scopes.last_mut().unwrap();
+                    for name in vars {
+                        scope.insert_ident(
+                            name.clone(),
+                            IdentifierVariant::Variable{
+                                r#type:r#type.clone(),
+                                reg:Reg::Var(
+                                    if scope.global {
+                                        StackRef::Abs(-(scope.stack_vars as i32)) // depends on stack size of main program, which is unknown - maybe take abs0!=stack0... temporarily? fix them later? is ugly but oh well I suppose it needs to be done
+                                    } else {
+                                        StackRef::Rel(-(scope.stack_vars as i32))
+                                    }
+                                )
+                            }
+                        )?;
+                        scope.stack_vars += 1;
+                        scope.stack_max += 1;
+                    }
+                }
+                Statement::ArrayDef{arrays,r#type} => {
+                    // put arrays into top scope
+                    for (name,size) in arrays {
+                        let size = self.compile_const_expr(&mut size)?;
+                        let scope = self.scopes.last_mut().unwrap();
+                        if size<0 || size as usize > MAX_ARRAY_LEN {
+                            return Err(format!("Array length {size} for array {name} in scope {} invalid",scope.name));
+                        }
+                        let size = size as usize;
+                        scope.insert_ident(
+                            name.clone(),
+                            IdentifierVariant::Array{
+                                r#type:r#type.clone(),
+                                reg:Reg::Array(
+                                    if scope.global {
+                                        StackRef::Abs(-((scope.stack_vars+size-1) as i32))
+                                    } else {
+                                        StackRef::Abs(-((scope.stack_vars+size-1) as i32))
+                                    },
+                                    size
+                                )
+                            }
+                        )?;
+                        scope.stack_vars += size;
+                        scope.stack_max += size;
+                    }
+                }
+                Statement::FnDef{name,params,..} => {
+                    // put function name and parameters into top scope
+                    self.insert_ident(
+                        ScopeVariant::Function.prefix() + name, 
+                        IdentifierVariant::Function{params:params.clone()}
+                    )?;
+                }
+                Statement::ConstDef{name,value} => {
+                    // put const into top scope
+                    // constants are evaluated NOW so they can only use constants that were defined previously
+                    let value = self.compile_const_expr(&mut value)?;
+                    self.insert_ident(
+                        name.clone(),
+                        IdentifierVariant::Constant{value, r#type:None}
+                    )?;
+                }
+                Statement::EnumDef{name,variants} => {
+                    // enums
+                    // note that multiple enum variants may have the same value, but not name
+                    // they essentially act as bundled constants
+                    let mut counted_variants:HashMap<String,i32> = HashMap::new();
+                    let mut i:i32=-1;
+                    for (variant,value) in variants.into_iter_mut() {
+                        i = match value {Some(v)=>self.compile_const_expr(&mut v)?, _=>i+1};
+                        let old = counted_variants.insert(variant.clone(),i);
+                        if let Some(_) = old {return Err(format!("Enum variant {variant} of enum {name} in scope {} is already defined",self.get_scope_name()));}
+                    }
+                    // put enum into top scope
+                    self.insert_ident(
+                        name.clone(),
+                        IdentifierVariant::Enum{
+                            variants:counted_variants
+                        }
+                    )?;
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+    /// Actually compile statements
+    fn compile_action_statements(
+        &mut self,
+        statements:Vec<Statement>,
+        instr:&mut Vec<MkOrInstr<SC>>,
+        instr_fn:&mut Vec<MkOrInstr<SC>>
+    ) -> Result<(),CompileError> {
+        let mut cnt_blk = 0u32;
+        let mut cnt_if  = 0u32;
+        let mut cnt_loop = 0u32;
+        let mut cnt_while = 0u32;
+
+
+
+        // then, do the actual compilation to a format full of references (as number of variables on stack etc. and indices of functions are still uncertain)
+        for statement in statements.into_iter_mut() {
+            debug!("Fully compiling statement {:?}",statement);
+            match statement {
+                Statement::VarAssign{name,value} => {
+                    debug!(" > starting compiling varassign");
+                    debug!(" > reduce const");
+                    self.preprocess_expr(&mut value)?;
+
+                    debug!(" > find variable");
+                    let reg = match self.find_ident(&name) {
+                        Some(Identifier{variant:IdentifierVariant::Variable{reg,..},..}) => *reg,
+                        _ => unreachable!(),
+                    };
+
+                    debug!(" > compile expr");
+                    self.compile_expr(&mut value, &mut instr,Some(reg))?;
+                    debug!(" > finished compiling varassign");
+
+                }
+                Statement::ArrayAssign{name,index,value} => {
+                    // compute index
+                    // compute value
+                    // assign to array
+                    self.preprocess_expr(&mut index)?;
+                    self.preprocess_expr(&mut value)?;
+
+                    let (reg_index,tmp_index) = self.compile_expr(&mut index, &mut instr, None)?;
+                    let (reg_value,tmp_value) = self.compile_expr(&mut value, &mut instr,None)?;
+                    self.release_tmp(tmp_value);
+                    self.release_tmp(tmp_value);
+
+                    let reg = match self.find_ident(&name) {
+                        Some(Identifier{variant:IdentifierVariant::Array{reg,..},..}) => *reg,
+                        _ => unreachable!(),
+                    };
+
+                    instr.push(MkOrInstr::Instr(Instr::ArrayAssign{array:reg,index:reg_index,value:reg_value}));
+                }
+
+                Statement::If{condition,code} => {
+                    // open up IF scope
+                    // add computations for computing expression
+                    // add conditional jump to END of scope
+                    // add instructions for code
+                    // register scope data
+                    // pop scope
+                    self.create_sub(format!("{}",cnt_if),ScopeVariant::If);
+                    cnt_if+=1;
+                    instr.push(MkOrInstr::Marker(self.get_scope_name().clone()+".START")); // not really needed, but useful for clarity
+
+                    self.preprocess_expr(&mut condition)?;
+
+                    let (reg,tv) = self.compile_expr(&mut condition, &mut instr,None)?;
+                    instr.push(MkOrInstr::Instr(Instr::JumpUnless{index:self.get_scope_name()+".END",condition:reg}));
+                    self.release_tmp(tv);
+
+                    self.compile_statements(vec![*code],&mut instr,&mut instr_fn)?;
+
+                    instr.push(MkOrInstr::Marker(self.get_scope_name()+".END"));
+                    self.pop_scope();
+                }
+                Statement::IfElse{condition,yes,no} => {
+
+                    // like if, but at end of first code jump to end of second instr
+                    self.create_sub(format!("{}",cnt_if),ScopeVariant::If);
+                    cnt_if+=1;
+                    instr.push(MkOrInstr::Marker(self.get_scope_name()+".START")); //not really needed
+
+                    let condition = self.preprocess_expr(&mut condition)?;
+
+                    let (reg,tv) = self.compile_expr(&condition,&mut instr, None)?;
+                    instr.push(MkOrInstr::Instr(Instr::JumpUnless{index:self.get_scope_name()+".ELSE",condition:reg}));
+                    self.release_tmp(tv);
+
+                    self.compile_statements(vec![*yes],&mut instr, &mut instr_fn)?;
+
+                    instr.push(MkOrInstr::Instr(Instr::Jump{index:self.get_scope_name()+".END"}));
+                    instr.push(MkOrInstr::Marker(self.get_scope_name()+".ELSE"));
+
+                    self.compile_statements(vec![*no], &mut instr, &mut instr_fn)?;
+
+                    instr.push(MkOrInstr::Marker(self.get_scope_name()+".END"));
+                    self.pop_scope();
+                }
+                Statement::While{condition,code} => {
+                    // open up while scope
+                    // add computations for computing expression
+                    // add conditional JUMP to end of scope
+                    // add instructions for code
+                    // add JUMP to START of while scope
+                    // register scope data
+                    // pop scope
+                    self.create_subscope(format!("{}",cnt_while),ScopeVariant::Loop);
+                    cnt_while+=1;
+                    instr.push(MkOrInstr::Marker(self.get_scope_name()+".START"));
+
+                    self.preprocess_expr(&mut condition)?;
+
+                    let (reg,tv) = self.compile_expr(&condition,&mut instr,None)?;
+                    instr.push(MkOrInstr::Instr(Instr::JumpUnless{index:self.get_scope_name()+".END",condition:reg}));
+                    self.release_tmp(tv);
+
+                    self.recursive_compile(vec![*code],&mut instr, &mut instr_fn)?;
+                    instr.push(MkOrInstr::Instr(Instr::Jump{index:self.get_scope_name()+".START"}));
+                    
+                    instr.push(MkOrInstr::Marker(self.get_scope_name()+".END"));
+                    
+                    self.pop_scope();
+                }
+                Statement::Loop(code) => {
+                    // open up loop scope
+                    // parse code
+                    // register max number of variables in scope
+                    // pop loop scope
+                    // add JUMP to start of current scope
+                    self.create_subscope(format!("{}",cnt_loop),ScopeVariant::Loop);
+                    cnt_loop+=1;
+                    instr.push(MkOrInstr::Marker(self.get_scope_name()+".START"));
+
+                    self.compile_statements(vec![*code],&mut instr, &mut instr_fn)?;
+                    instr.push(MkOrInstr::Instr(Instr::Jump{index:self.get_scope_name()+".START"}));
+
+                    instr.push(MkOrInstr::Marker(self.get_scope_name()+".END"));
+                    self.pop_scope();
+                }
+                Statement::Break => {
+                    // find nearest scope that is loop or while
+                    // fail when encountering fn scope
+                    // jumpt to END of scope (i.e. exactly afterwards)
+                    let loop_scope = self.find_scope_variant(&[ScopeVariant::While,ScopeVariant::Loop]);
+                    if let Some(loop_scope)=loop_scope {
+                        instr.push(MkOrInstr::Instr(Instr::Jump{index:loop_scope.name.clone()+".END"}));
+                    } else {
+                        return Err(format!("Break statement outside of loop in scope {}",self.get_scope_name()))
+                    }
+                }
+                Statement::Continue => {
+                    // find nearest scope that is loop or while
+                    // fail when encountering fn scope
+                    // loop: jump to START of that scope (i.e. first instruction after)
+                    // while: jump to before computation of condition
+                    let loop_scope = self.find_scope_variant(&[ScopeVariant::While,ScopeVariant::Loop]);
+                    if let Some(loop_scope)=loop_scope {
+                        instr.push(MkOrInstr::Instr(Instr::Jump{index:loop_scope.name.clone()+".START"}));
+                    } else {
+                        return Err(format!("Continue statement outside of loop in scope {}",self.get_scope_name()))
+                    }
+                }
+                Statement::Return(value) => {
+                    let mut value = value.unwrap_or_else(||Expr::Num(0));
+                    self.preprocess_expr(&mut value)?;
+                    // find parent fn scope
+                    // return (value, parent_fn) if it is not global!!!
+                    let fn_scope = self.find_scope_variant(&[ScopeVariant::Function]).unwrap();
+                    if fn_scope.global {
+                        return Err(format!("Return statement outside of function in scope {}",self.get_scope_name()))
+                    }
+                    let fn_name = fn_scope.name.clone();
+
+                    let (reg,tv) = self.compile_expr(&value, &mut instr,None)?;
+                    self.release_tmp(tv);
+                    instr.push(MkOrInstr::Instr(Instr::Return{stack:fn_name,value:reg}));
+                }
+
+                Statement::Expr(expr) => {
+                    // just an expression not assigned to a variable (mostly function calls)
+                    // basically the same as variable assignment
+                    // but use fake target address
+                    // also, ignore if expr is constant
+                    self.preprocess_expr(&mut expr)?;
+                    self.compile_expr(&mut instr, &expr,Some(Reg::Const(0)))?;
+                }
+
+                Statement::CodeBlock(statements) => {
+                    // create scope
+                    // parse things in block
+                    // register scope
+                    // pop scope
+
+                    self.create_subscope(format!("{}",cnt_blk),ScopeVariant::Block);
+                    cnt_blk+=1;
+
+                    self.compile_statements(statements,&mut instr, &mut instr_fn)?;
+
+                    self.pop_scope();
+                }
+
+                // definitions already handled
+                Statement::VarDef{..} => {}
+                Statement::ArrayDef{..} => {}
+                Statement::ConstDef{..} => {}
+                Statement::EnumDef{..} => {}
+                
+                // compute function 
+                Statement::FnDef{name,params,code} => {
+                    // determine code for function 
+                    // must be appended to script after
+
+                    // create function scope
+                    // add parameters to scope
+                    // parse the code of the function
+                    // add instructions to functions
+                    // register function size
+                    // reabsorb scope
+                    debug!(" > start compiling function");
+                    
+                    // make scope
+                    self.create_fn_scope(name);
+                    let mut scope = self.scopes.last_mut().unwrap();
+                    instr_fn.push(MkOrInstr::Marker(self.get_scope_name()+".START"));
+
+                    // add params
+                    for param in params.into_iter() {
+                        match param {
+                            FnParam::Value(name) =>
+                                scope.insert_ident(
+                                    name,
+                                    IdentifierVariant::Variable{
+                                        reg:Reg::Var(StackRef::Rel(-(scope.stack_vars as i32))),
+                                        r#type:None}).unwrap(),
+                            FnParam::Reference(name) =>
+                                scope.insert_ident(
+                                    name,
+                                    IdentifierVariant::Variable{
+                                        reg:Reg::VarRef(StackRef::Rel(-(scope.stack_vars as i32))),
+                                        r#type:None}).unwrap(),
+                            FnParam::Array(name) =>
+                                scope.insert_ident(
+                                    name,
+                                    IdentifierVariant::Array{
+                                        reg:Reg::ArrayRef(StackRef::Rel(-(scope.stack_vars as i32))),
+                                        r#type:None}).unwrap(),
+                        }
+                        scope.stack_vars+=1;
+                        scope.stack_max+=1;
+                    }
+
+                    // parse code and add to functions
+                    let mut instr_fn2 = Vec::new();
+                    self.recursive_compile(code, &mut instr_fn,&mut instr_fn2)?;
+                    instr_fn.push(MkOrInstr::Marker(self.get_scope_name()+".END")); //mark end
+                    
+                    self.fn_sizes.insert(self.get_scope_name().clone(),self.scopes.last().unwrap().stack_max); //register size
+                    self.pop_scope();
+
+                    instr_fn.append(&mut instr_fn2);
+
+                    debug!(" > finished compiling function");
+                }
+            }
+        }
+
+
+        // if this is a function, and if it does not already end on a return statement, and it is not the global scope, add a return statement
+        if matches!(self.scopes.last().unwrap().variant,ScopeVariant::Function{..}) && !self.scopes.last().unwrap().global{
+            if !matches!(
+                instr.iter().rev().filter(|mki| matches!(mki,MkOrInstr::Instr(_))).next(),
+                Some(MkOrInstr::Instr(Instr::Return{..}))
+            ) { //last instr (not marker!) is not a Return statement
+                instr.push(MkOrInstr::Instr(Instr::Return{stack:self.get_scope_name().clone(),value:Reg::Const(0)}));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Preprocess expression: reduce to constants where possible, and check identifiers.
+    /// For functions/syscalls, also check if function parameters match descriptions.
+    pub fn preprocess_expr(&mut self,expr:&mut Expr)-> Result<(),Error> { //TODO: mut borrow expr, and change in place??? probably better; requires less cloning
+        match expr {
+            Expr::Num(x) => {}//Ok(Expr::Num(*x)),
+            Expr::Op{op,lhs,rhs} => {
+                self.preprocess_expr(lhs)?;
+                self.preprocess_expr(rhs)?;
+
+                if let (Expr::Num(x),Expr::Num(y)) = (&lhs,&rhs) {
+                    *expr = Expr::Num(op.eval(*x,*y)?);
+                }
+            }
+            Expr::Unary{op,rhs} => {
+                self.preprocess_expr(rhs)?;
+                if let Expr::Num(y) = rhs {
+                    *expr = Expr::Num(op.eval(y))
+                }
+            }
+            Expr::Variable(name) => {
+                match self.find_ident(name) {
+                    Some(Identifier{variant:IdentifierVariant::Constant{value,..},..}) => *expr=Expr::Num(*value),
+                    Some(Identifier{variant:IdentifierVariant::Variable{..},..}) => {}
+                    _ => Err(format!("'{name}' does not name a variable or constant in scope '{}'",self.get_scope_name())),
+                }
+            }
+            Expr::EnumVariant{name,variant} => {
+                match self.find_ident(name) {
+                    Some(Identifier{name,variant:IdentifierVariant::Enum{variants}}) => {
+                        match variants.get(&variant) {
+                            Some(value) => *expr=Expr::Num(*value),
+                            _ => Err(format!("Variant '{variant}' not found in enum '{name}'"))
+                        }
+                    },
+                    _ => Err(format!("'{name}' does not name an enum in scope '{}'",self.get_scope_name())),
+                }
+            }
+            Expr::ArrayIndex{name,index} => {
+                match self.find_ident(name) {
+                    Some(Identifier{variant:IdentifierVariant::Array{..},..}) => 
+                        self.preprocess_expr(index),
+                    _ => Err(format!("'{name}' does not name an array in scope '{}'",self.get_scope_name())),
+                }
+            }
+            Expr::FnCall{name,args} => {
+
+                // TODO
+                // make this better
+
+                /*
+                
+                Look at the arguments
+                Var -> check array or variable -> make ref or array
+                other expr -> preprocess -> val
+
+                then check against pattern, where
+                - array matches array
+                - val/ref matches val
+                - ref matches ref
+
+                syscalls have more advanced checking (i.e. pattern, during runtime, or arbitrary function)
+
+                */
+
+
+                match self.find_ident(name) {
+                    Some(Identifier{variant:IdentifierVariant::Function{params,..},..}) => {
+                        // only compile arguments that are of VALUE/REF type, since arrays are seens as variables, that aren't variables in this scope
+
+                        let arg_variants = args.iter_mut().map(|arg| {
+                            if let Expr::Variable(var) = arg {
+                                if matches!(self.find_ident(var),Some(Identifier{variant:IdentifierVariant::Array{..},..})) {
+                                    return Ok(FnParamVariant::Array)
+                                }
+                            }
+                            self.preprocess_expr(arg)?;
+                            match arg {
+                                Expr::Variable(_) => Ok(FnParamVariant::Reference), // TODO <= add Expr::ArrayIndex here to allow array index parsing by reference
+                                _ => Ok(FnParamVariant::Value),
+                            }
+                        }).collect::<Result<Vec<FnParamVariant>,CompileError>>()?;
+
+                        self.check_fn_params(params.iter().map(|param| param.variant),arg_variants)?;
+                    }
+                    Some(Identifier{variant:IdentifierVariant::SysCall{param_check,..},..}) => {
+                        // same code as function; somehow merge the two? TODO; only final check is different
+                        let arg_variants = args.iter_mut().map(|arg| {
+                            if let Expr::Variable(var) = arg {
+                                if matches!(self.find_ident(var),Some(Identifier{variant:IdentifierVariant::Array{..},..})) {
+                                    return Ok(FnParamVariant::Array)
+                                }
+                            }
+                            self.preprocess_expr(arg)?;
+                            match arg {
+                                Expr::Variable(_) => Ok(FnParamVariant::Reference), // TODO <= add Expr::ArrayIndex here to allow array index parsing by reference
+                                _ => Ok(FnParamVariant::Value),
+                            }
+                        }).collect::<Result<Vec<FnParamVariant>,CompileError>>()?;
+
+                        match param_check {
+                            SysCallParamCheck::Pattern(p) => self.check_fn_params(p,arg_variants)?,
+                            SysCallParamCheck::Match(check) => check(arg_variants)?,
+                            SysCallParamCheck::Runtime => {}
+                        }
+                    }
+                    _ => Err(format!("{name} does not name a function in scope {}",self.get_scope_name())),
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Attempt to evaluate expression as a constant, given a list of scopes.
+    /// This includes the preprocessing step.
+    pub fn compile_const_expr(&self,expr:&mut Expr) -> Result<i32,CompileError> {
+        let expr = self.preprocess_expr(expr)?;
+        if let Expr::Num(x) = expr {
+            Ok(x)
+        } else {
+            Err(format!("Expression {expr:?} cannot be computed as a constant"))
+        }
+    }
+
+    /// Compile pre-processed(!!!) expression into instr.
+    /// If a target register is supplied, use that, otherwise, return.
+    /// 
+    /// Generate instructions for processing an expression
+    /// Assumes expression has been reduced to constants beforehand (i.e. variables are not constants, no enum variants)
+    /// and variables/arrays have been checked to exist
+    fn compile_expr(
+        &mut self,
+        expr:Expr,
+        instr: &Vec<MkOrInstr<SC>>,
+        dest:Option<Reg> /* memory location to store result in */
+    ) -> Result<(Reg,Option<Reg>),Error> {
+        // debug!(" > CALC EXPR {:?}",expr);
+
+        /// Get destination (either the original dest, or a temporary variable)
+        fn get_reg<SC>(env:&mut Environment<SC>,reg:Option<Reg>) -> (Reg,Option<usize>) {
+            if let Some(r) = reg {
+                (r,None)
+            } else {
+                let tv=env.get_tmp();
+                (tv,Some(tv))
+            }
+        }
+
+        Ok(match expr {
+            Expr::Num(x) => {
+                if let Some(r)=dest {
+                    instr.push(MkOrInstr::Instr(Instr::UnaryOperator{op:UnaryOperator::Nop,rhs:Reg::Const(*x),res:r}));
+                    (r,None) // store constant in reg
+                } else {
+                    (Reg::Const(*x),None) //just return the constant
+                }
+            }
+            Expr::Variable(name) => {
+                let var = match self.find_ident(&name) {
+                    Some(Identifier{variant:IdentifierVariant::Variable{reg:r,..},..}) => *r,
+                    // Some(Identifier{variant:IdentifierVariant::VariableRef{reg:r},..}) => *r,
+                    _ => unreachable!(), // code was checked during reduce_const step, and should only have (referenced) variables
+                };
+
+                if let Some(d)=dest {
+                    instr.push(MkOrInstr::Instr(Instr::UnaryOperator{op:UnaryOperator::Nop,rhs:var,res:d})); // store variable
+                    (d,None)
+                } else {
+                    (var,None) // just return variable
+                }
+            }
+            Expr::Op{op,lhs,rhs} => {
+                let (reg_lhs,tmp_lhs) = self.compile_expr(lhs,&mut instr,None)?;
+                let (reg_rhs,tmp_rhs) = self.compile_expr(rhs,&mut instr,None)?;
+                self.release_tmp(tmp_rhs);
+                self.release_tmp(tmp_lhs);
+                
+                let (reg,tv) = get_reg(&mut self,dest);
+
+                instr.push(MkOrInstr::Instr(Instr::BinaryOperator{op:*op,lhs:reg_lhs,rhs:reg_rhs,res:reg}));
+                (reg,tv)
+            },
+            Expr::Unary{op,rhs} => {
+                let (reg_rhs,tmp_rhs) = self.compile_expr(rhs,&mut instr,None)?;
+                self.release_tmp(tmp_rhs);
+                
+                let (reg,tv) = get_reg(&mut self,dest);
+            
+                instr.push(MkOrInstr::Instr(Instr::UnaryOperator{op:*op,rhs:reg_rhs,res:reg}));
+                (reg,tv)
+            },
+            Expr::ArrayIndex{name,index} => {
+                // compute index, add indexing instr
+                let (reg_index,tmp_index) = self.compile_expr(index,&mut instr,None)?;
+                self.release_tmp(tmp_index);
+                
+                let (reg,tv) = get_reg(&mut self,dest);
+
+                let array = match self.find_ident(&name) {
+                    Some(Identifier{variant:IdentifierVariant::Array{reg:r,..},..}) => *r,
+                    _ => unreachable!(),
+                };
+            
+                instr.push(MkOrInstr::Instr(Instr::ArrayIndex{array:array,index:reg_index,res:reg}));
+                (reg,tv)
+            },
+            Expr::FnCall{name,args} => {
+                // get function from scopes
+                // check number of arguments
+                // per argument:
+                    // check argument type
+                        // evaluate expr -> reg, of which the VALUE will be copied - store any temp vars created
+                        // ref -> reg, of which the STACK POS will be copied
+                        // array -> reg:array, 
+                // get return register
+                // call function
+                // free temp registers
+
+                let mut tmp_vars:Vec<Option<Reg>> = Vec::new(); //to store temp vars
+            
+                // get function
+                let fnid = self.find_ident(&name).unwrap();//.clone();
+
+                // split between sys call and function call
+                match fnid {
+                    Identifier{variant:IdentifierVariant::Function{params},..} => {
+                        // map arguments to parameters
+                        let params = args.iter().zip(params.iter()).map(|(val,param)| 
+                            Ok::<FnArg,CompileError>(match param {
+                                FnParam::Value(_) => {
+                                    // argument can be any expression
+                                    let (reg,tv) = self.compile_expr(val,&mut instr,None)?;
+                                    tmp_vars.push(tv);
+                                    FnArg::Val(reg)
+                                }
+                                FnParam::Reference(_) => {
+                                    // argument must be a variable(name) where name refers to any (ref)variable
+                                    if let Expr::Variable(name) = val {
+                                        match self.find_ident(name).unwrap() {
+                                            Identifier{variant:IdentifierVariant::Variable{reg,..},..} =>
+                                                FnArg::VarRef(*reg),
+                                            _=>unreachable!(),
+                                        }
+                                    } else {unreachable!();}
+                                }
+                                FnParam::Array(_) => {
+                                    // argument must be Variable(name) where name refers to an array
+                                    if let Expr::Variable(name) = val {
+                                        match self.find_ident(name).unwrap() {
+                                            Identifier{variant:IdentifierVariant::Array{reg,..},..} =>
+                                                FnArg::ArrayRef(*reg),
+                                            _=>unreachable!(),
+                                        }
+                                    } else {unreachable!();}
+                                }
+                            })
+                        ).collect::<Result<Vec<FnArg>,_>>()?;
+        
+                        // free variables
+                        for tv in tmp_vars.iter().rev() {self.release_tmp(tv);}
+                        
+                        let (reg,tv) = get_reg(&mut self,dest);
+                        instr.push(MkOrInstr::Instr(Instr::FnCall { index: fnid.name.clone()+".START", params, res: reg, stack: fnid.name.clone() }));
+                        (reg,tv)
+                    },
+                    Identifier{variant:IdentifierVariant::SysCall { param_check, call },..} => {
+                        // same code as function; somehow merge the two? TODO; only final check is different
+                        let params = args.iter_mut().map(|arg| {
+                            Ok(if let Expr::Variable(var) = arg {
+                                match self.find_ident(var) {
+                                    Some(Identifier{variant:IdentifierVariant::Array{reg,..},..}) => FnArg::ArrayRef(reg),
+                                    Some(Identifier{variant:IdentifierVariant::Variable{reg,..},..}) => FnArg::VarRef(reg),
+                                    _=>unreachable!(),
+                                }
+                            } else {
+                                let (reg,tv) = self.compile_expr(arg,&mut instr,None)?;
+                                tmp_vars.push(tv);
+                                FnArg::Val(reg)
+                            })
+                        }).collect::<Result<Vec<FnArg>,CompileError>>()?;
+
+
+                        // free variables
+                        for tv in tmp_vars.iter().rev() { self.release_tmp(tv);}
+
+                        let (reg,tv) = get_reg(&mut self,dest);
+                        instr.push(MkOrInstr::Instr(Instr::SystemCall {params, res:reg, call:name}));
+
+                        (reg,tv)
+                    }
+                    _=>unreachable!(),
+                }
+            },
+            Expr::EnumVariant{..} => unreachable!(), // enum variants should have been converted to const already
+        })
+    }
+
+    /// Post-process instructions, filling in markers, shifting abs, filling in indices etc.
+    /// Fill in ProgramIndex markers, StackSizes, and shift Abs positions by root's stacksize
+    fn postprocess_instr(
+        &mut self,
+        instr: Instr<String,String,SC>,
+        markers:&HashMap<String,usize>,
+        absshift:i32,
+    ) -> Instr<usize,usize,SC> {
+        match instr {
+            Instr::Jump{index} => Instr::Jump{index:*markers.get(&index).unwrap()},
+            Instr::JumpUnless{index,condition} =>
+                Instr::JumpUnless{index:*markers.get(&index).unwrap(),condition:condition.absshift(absshift)},
+            Instr::FnCall{index,params,res,stack} => 
+                Instr::FnCall{
+                    index:*markers.get(&index).unwrap(),//_or_else(|| {debug!("{:?} {:?}",markers,index);panic!()}),
+                    params:params.into_iter().map(|a| a.absshift(absshift)).collect(),
+                    res:res.absshift(absshift),
+                    stack:*self.fn_sizes.get(&stack).unwrap(), //unwrap_or_else(|| {debug!("{:?} {}",fnsizes,stack);panic!()}),
+                },
+            Instr::SystemCall{params,res,call} => 
+                Instr::SystemCall{
+                    params:params.into_iter().map(|a| a.absshift(absshift)).collect(),
+                    res:res.absshift(absshift),
+                    call:call,
+                },
+
+            Instr::Return { stack, value } =>
+                Instr::Return { stack:*self.fn_sizes.get(&stack).unwrap(), value:value.absshift(absshift) }, // get stack size of function by name
+
+            //i => i as Instr<usize>,
+            Instr::ArrayAssign { array, index, value } =>
+                Instr::ArrayAssign { array, index:index.absshift(absshift), value:value.absshift(absshift) },
+            Instr::ArrayIndex { array, index, res } =>
+                Instr::ArrayIndex { array, index:index.absshift(absshift), res:res.absshift(absshift) },
+            Instr::BinaryOperator { op, lhs, rhs, res } =>
+                Instr::BinaryOperator { op, lhs:lhs.absshift(absshift), rhs:rhs.absshift(absshift), res:res.absshift(absshift) },
+            Instr::UnaryOperator { op, rhs, res } =>
+                Instr::UnaryOperator { op, rhs:rhs.absshift(absshift), res:res.absshift(absshift) },
+
+            Instr::Init{stack, index} => Instr::Init{stack:*self.fn_sizes.get(&stack).unwrap(),index:*markers.get(&index).unwrap()},
+        }
+    }
+
+
+// scopes:
+
+    /// Create a subscope (not for functions)
+    fn create_subscope(&mut self,name: String, variant:ScopeVariant) {
+        let scope = self.scopes.last().unwrap().create_subscope(name,variant);
+        self.scopes.push(scope);
+    }
+
+    /// Create a function subscope
+    fn create_fn_scope(&mut self,name: String) {
+        let scope = self.scopes.last().unwrap().create_fn_scope(name);
+        self.scopes.push(scope);
+    }
+
+    /// Pop top scope and let it be absorbed by its parent
+    fn pop_scope(&mut self,) {
+        let scope = self.scopes.pop();
+        assert!(scope.tmp_vars.len()==scope.stack_tmp,"Attempt to close scope before all temp vars are released");
+        self.scopes.last_mut().unwrap().absorb_subscope(scope);
+    }
+
+    /// Return top scope matching any of the supplied scope variants
+    /// Stop after finding a function scope
+    pub fn find_scope_variant<'a>(&self,variants:&[ScopeVariant]) -> Option<&'a Scope<SC>> {
+        for scope in self.scopes.iter().rev() {
+            if variants.contains(&scope.variant) {
+                return Some(scope);
+            } else if scope.variant==ScopeVariant::Function {
+                return None;
+            }
+        }
+        unreachable!(); //root should always be Function type
+    }
+
+
+// vars and identifiers:
+
+    /// Insert an identifier into the current scope
+    fn insert_ident(&mut self,name: String, variant:IdentifierVariant<SC>) -> Result<(),Error> {
+        self.scopes.last_mut().unwrap().insert_ident(name,variant)
+    }
+
+    /// Find identity in scopes
+    /// Variables/arrays are only visible in the current function and global scope
+    fn find_ident<'a>(&'a self,name:&String) -> Option<&'a Identifier<SC>> {
+        let mut allow_vars = true; //still in same function
+        for scope in self.scopes.iter().rev() { //top to bottom
+            match scope.identifiers.get(name) {
+                // always visible
+                Some(id@Identifier{variant:
+                    IdentifierVariant::Function{..}|
+                    IdentifierVariant::Constant{..}|
+                    IdentifierVariant::Enum{..},
+                    ..
+                }) => {return Some(&id);}
+                // variable/array
+                Some(id) if allow_vars || scope.global => {return Some(&id);}
+                _ => {}
+            }
+            // turn off after function scope
+            if matches!(scope.variant,ScopeVariant::Function) {
+                allow_vars=false;
+            }
+        }
+        None
+    }
+
+
+    /// Get a temporary variable
+    fn get_tmp(&mut self) -> Reg {
+        self.scopes.last_mut().unwrap().get_tmp()
+    }
+    /// Release temporary variable again
+    /// Must be released in reverse order of get_tmp!!!
+    fn release_tmp(&mut self, tv:Option<Reg>) {
+        if let Some(tv) = tv {
+            self.scopes.last_mut().unwrap().release_tmp(tv);
+        }
+    }
+
+// public access
+
+    /// Create new instance
+    pub fn new() -> Self {todo!()}
+    /// Create base scope from scratch, with no variables
+    pub fn create_basescope(&mut self, name:String) -> &mut Self {
+        self.scopes.push(Scope::new_base_scope(name));
+        self
+    }
+    /// Add system call to the scopes
+    pub fn add_syscall(&mut self, name:String, call: SC, check: SysCallParamCheck) -> Result<&mut Self,CompileError>{
+        self.scopes.last_mut().unwrap().insert_ident(name,IdentifierVariant::SysCall {param_check: check, call})?;
+        Ok(self)
+    }
+    /// Compile statements into instructions; this also adds the root scope
+    pub fn compile(&mut self, program:Vec<Statement>) -> Result<Vec<Instr<usize,usize,SC>>,CompileError> {
+
+        // First, set up root scope
+        let mut root = Scope::new_base_scope("@root".to_string());
+        root.stack_vars=1; // allocate main PC
+        root.stack_max=1;
+        self.scopes.push(root);
+        
+        
+        // Create instructions
+        let mut instr = Vec::new();
+        let mut functions = Vec::new();
+
+        debug!("C: initial instructions");
+        instr.push(MkOrInstr::Instr(Instr::Init{index:"@root.START".to_string(),stack:"@root".to_string()}));
+        instr.push(MkOrInstr::Marker("@root.START".to_string()));
+    
+        // Recursively move through statements
+        debug!("C: recusive compile");
+        self.compile_statements(program,&mut instr,&mut functions)?;
+        self.fn_sizes.insert("@root".to_string(),self.scopes.last().unwrap().stack_max);
+    
+        // Add JUMP to start of program (i.e. loop)
+        debug!("C: add jump to start and functions");
+        instr.push(MkOrInstr::Instr(Instr::Jump{index:"@root.START".to_string()}));
+    
+        // Add functions
+        instr.append(&mut functions);
+    
+        // Determine final locations of jumps
+        debug!("C: create markers");
+
+        let mut markers:HashMap<String,usize> = HashMap::new();
+    
+        let mut i:usize = 0;
+        for MkOrInstr in instr.iter() {
+            match MkOrInstr {
+                MkOrInstr::Marker(m) => {markers.insert(m.clone(),i);}
+                MkOrInstr::Instr(_) => {i+=1;}
+            }
+        }
+        
+        // Determine size of global scope
+        self.global_size = *self.fn_sizes.get("@root").unwrap();
+    
+        // Create final code, without markers, and with valid jump values, and with shifted ABS values and correct stack sizes
+        debug!("C: replace markers, stack sizes and offset absolute stack relations");
+        
+        Ok(instr
+            .into_iter()
+            .filter_map(|mki|
+                match mki {
+                    MkOrInstr::Marker(_) => None,
+                    MkOrInstr::Instr(i) => Some(self.postprocess_instr(i,&markers,self.global_size as i32-1)),
+                })
+            .collect())
+    }
+    
+    
+    
+
+// helper functions
+
+    /// Helper function for comparing function arguments with the list of required parameters
+    pub fn check_fn_args(params:Vec<FnParamVariant>,args:Vec<FnParamVariant>) -> Result<(),CompileError> {
+        if params.len() != args.len() {
+            return Err(format!("Expected {} arguments for function, got {}",params.len(),args.len()));
+        }
+        for i in 0..params.len() {
+            match (params[i],args[i]) {
+                (FnParamVariant::Array,FnParamVariant::Array) |
+                (FnParamVariant::Reference,FnParamVariant::Reference) |
+                (FnParamVariant::Value,FnParamVariant::Reference) |
+                (FnParamVariant::Value,FnParamVariant::Value) => {}
+                (p,a) => return Err(format!("Parameter type {a:?} cannot be interpreted as type {p:?}"))
+            }
+        }
+        Ok(())
+    }
+    /// Get name of the current top scope
+    fn get_scope_name(&self) -> &String {
+        &self.scopes.last().unwrap().name
+    }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+////////// SCOPES
+
+impl<SC> Scope<SC> {
+// subscopes
+    pub fn new_base_scope(name:String) -> Self {
+        Self {
+            name,
+            global: true,
+            identifiers: HashMap::new(),
+            variant: ScopeVariant::Function,
+            stack_vars: 0,
+            stack_tmp: 0,
+            stack_max: 0, 
+            tmp_vars: vec![],
+        }
+    }
+
+    /// Create subscope, assuming the type is not function
+    pub fn create_subscope(&self, name: String, variant:ScopeVariant) -> Self {
+        assert!(self.stack_tmp==self.tmp_vars.len(),"Attempt to create subscope before all temporary variables have been released");
+        Self {
+            name: format!("{}::{}{}",self.name,variant.prefix(),name).to_string(),
+            global: self.global, //TODO: should this be allowed? or should only the absolute root level scope be global?
+            identifiers: HashMap::new(),
+            variant: variant,
+            tmp_vars: Vec::new(),
+            stack_vars: self.stack_vars,// TODO: check if this works (this would mean a scope cannot be opened while temp vars are in use, as their use is non-linear)
+            stack_max: self.stack_vars-self.tmp_vars.len(),
+            stack_tmp: 0,
+        }
+    }
+    /// Create function subscope
+    pub fn create_fn_scope(&self, name:String) -> Self {
+        let mut scope = self.create_sub(name,ScopeVariant::Function);
+        scope.stack_vars = 2; // PC + return addr
+        scope.stack_max = 2;
+        scope.global=false;
+        scope
+    }
+    /// Absorb subscope (register the maximum stack size required in subscope)
+    pub fn absorb_subscope(&mut self, sub: Scope<SC>) {
+        if !matches!(sub.variant,ScopeVariant::Function) {
+            self.stack_max = self.stack_max.max(sub.stack_max);
+        }
+    }
+
+// identifiers & variables
+
     /// Insert identifier into scope
-    pub fn insert(&mut self, name: String, variant:IdentifierVariant) -> Result<(),Error> {
+    pub fn insert_ident(&mut self, name: String, variant:IdentifierVariant<SC>) -> Result<(),CompileError> {
         let prev = self.identifiers.insert(name.clone(),Identifier{
             name: format!("{}::{}",self.name,name),
             variant: variant,
@@ -280,46 +1275,23 @@ impl Scope {
             Err(format!("Identifier {name} already in use: {prev:?}"))
         } else {Ok(())}
     }
-    /// create subscope, assuming the type is not function
-    pub fn create_sub(&self, name: String, variant:ScopeVariant) -> Self {
-        Self {
-            name: format!("{}::{}{}",self.name,variant.prefix(),name).to_string(),
-            global: self.global, //TODO: should this be allowed? or should only the absolute root level scope be global?
-            identifiers: HashMap::new(),
-            variant: variant,
-            tmp_vars: Vec::new(),
-            variables: self.variables-self.tmp_vars.len(),// TODO: check if this works (this would mean a scope cannot be opened while temp vars are in use, as their use is non-linear)
-            max_variables: self.variables-self.tmp_vars.len(),
-        }
-    }
-    /// create function scope
-    pub fn create_fn(&self, name:String) -> Self {
-        let mut scope = self.create_sub(name,ScopeVariant::Function);
-        scope.variables = 2; // PC + return addr
-        scope.max_variables = 2;
-        scope.global=false;
-        scope
-    }
-    /// reabsorb subscope
-    pub fn absorb_sub(&mut self, sub: Scope) {
-        if !matches!(sub.variant,ScopeVariant::Function) {
-            self.max_variables = self.max_variables.max(sub.max_variables);
-        }
-    }
-    /// create temporary variable
-    /// if previously used tempvars are available, use those (pop)
-    /// else, increase the number of temp vars used and create new one
-    pub fn get_tmp(&mut self) -> usize {
+    
+    /// Returns a temp variable
+    /// If previously used tmp vars are available, use those.
+    /// Else, create new one.
+    pub fn get_tmp(&mut self) -> Reg {
         if self.tmp_vars.len()!=0 {
             return self.tmp_vars.pop().unwrap();
         } else {
-            let tv = self.variables;
-            self.variables+=1;
-            self.max_variables = self.max_variables.max(self.variables);
-            tv
+            let tv = self.stack_vars+self.stack_tmp;
+            self.stack_tmp+=1;
+            self.stack_max = self.stack_max.max(self.stack_vars+self.stack_tmp);
+            Reg::Var(StackRef::Rel(-(tv as i32)))
         }
     }
-    pub fn release_tmp(&mut self, tv:usize) {
+    /// Release a temporary variable so it can be used again later.
+    /// Temp vars should be released in the reverse order of get_tmp.
+    pub fn release_tmp(&mut self, tv:Reg) {
         self.tmp_vars.push(tv);
     }
 }
@@ -331,874 +1303,55 @@ impl Scope {
 
 
 
-/// Find identifier in scopes
-/// Variables and arrays are only visible in the current function and global scope
-pub fn find_in_scopes<'a>(scopes: &'a Vec<Scope>,name:&String) -> Option<&'a Identifier> {
-    let mut allow_vars = true;
-    for scope in scopes.iter().rev() {
-        match scope.identifiers.get(name) {
-            Some(id@Identifier{variant:
-                IdentifierVariant::Function{..}|
-                IdentifierVariant::Constant{..}|
-                IdentifierVariant::Enum{..},
-                ..
-            }) => {return Some(&id);}
-            Some(id) if allow_vars || scope.global => {return Some(&id);}
-            _ => {}
-        }
-        // non-constants outside of current function scope and not in global scopes are not allowed
-        // so turn off after function scope
-        allow_vars = allow_vars && !matches!(scope.variant,ScopeVariant::Function);
-    }
-    None
-}
 
-/// Return top scope matching any of the supplied scope variants
-/// Stop after finding a function scope
-pub fn find_scope_variant<'a>(scopes: &'a Vec<Scope>,variants:&[ScopeVariant]) -> Option<&'a Scope> {
-    for scope in scopes.iter().rev() {
-        if variants.contains(&scope.variant) {
-            return Some(scope);
-        } else if scope.variant==ScopeVariant::Function {
-            return None;
+
+
+
+
+
+
+
+///////// POST PROCESSING
+
+impl FnArg {
+    fn absshift(self,shift:i32) -> Self {
+        match self {
+            FnArg::Val(r) => FnArg::Val(r.absshift(shift)),
+            FnArg::VarRef(r) => FnArg::VarReg(r.absshift(shift)),
+            FnArg::ArrayRef(r) => FnArg::ArrayReg(r.absshift(shift)),
         }
     }
-    unreachable!();
 }
 
-
-
-
-
-/// Reduce parts of expression that can be evaluated as constants
-pub fn reduce_const(scopes:&Vec<Scope>,expr:&Expr)-> Result<Expr,Error> {
-    match expr {
-        Expr::Num(x) => Ok(Expr::Num(*x)),
-        Expr::Op{op,lhs,rhs} => {
-            let lhs = reduce_const(scopes,lhs)?;
-            let rhs = reduce_const(scopes,rhs)?;
-
-            Ok(if let (Expr::Num(x),Expr::Num(y)) = (&lhs,&rhs) {
-                Expr::Num(op.eval(*x,*y)?)
-            } else {
-                Expr::Op{op:*op,lhs:Box::new(lhs),rhs:Box::new(rhs)}
-            })
+impl Reg {
+    /// Shift all absolute references
+    fn absshift(self,shift:i32) -> Self {
+        match self {
+            Reg::Const(x) => Reg::Const(x),
+            Reg::Var(sr) => Reg::Var(sr.absshift(shift)),
+            Reg::VarRef(sr) => Reg::VarRef(sr.absshift(shift)),
         }
-        Expr::Unary{op,rhs} => {
-            let rhs = reduce_const(scopes,rhs)?;
-            Ok(if let Expr::Num(y) = rhs {
-                Expr::Num(op.eval(y))
-            } else {
-                Expr::Unary{op:*op,rhs:Box::new(rhs)}
-            })
+    }
+}
+
+impl ArrayReg {
+    /// Shift all absolute references
+    fn absshift(self,shift:i32) -> Self {
+        match self {
+            Reg::Array(sr, sz) => Reg::Array(sr.absshift(shift),sz),
+            Reg::ArrayRef(sr) => Reg::ArrayRef(sr.absshift(shift)),
         }
-        Expr::Variable(name) => {
-            match find_in_scopes(scopes,name) {
-                Some(Identifier{variant:IdentifierVariant::Constant{value},..}) => Ok(Expr::Num(*value)),
-                Some(Identifier{variant:IdentifierVariant::Variable{..},..}) => Ok(Expr::Variable(name.clone())),
-                // Some(Identifier{variant:IdentifierVariant::VariableRef{..},..}) => Ok(Expr::Variable(name.clone())),
-                _ => Err(format!("'{name}' does not name a variable or constant in scope {}",scopes.last().unwrap().name)),
-            }
+    }
+}
+
+impl StackRef {
+    /// Shift absolute references
+    fn absshift(self,shift:i32) -> Self {
+        match self {
+            StackRef::Rel(x) => StackRef::Rel(x),
+            StackRef::Abs(x) => StackRef::Abs(x+shift),
         }
-        Expr::EnumVariant{name,variant} => {
-            match find_in_scopes(&scopes,name) {
-                Some(Identifier{name,variant:IdentifierVariant::Enum{variants}}) => {
-                    match variants.get(variant) {
-                        Some(value) => Ok(Expr::Num(*value)),
-                        _ => Err(format!("Variant {variant} not found in enum {name}"))
-                    }
-                },
-                _ => Err(format!("{name} does not name an enum in scope {}",scopes.last().unwrap().name)),
-            }
-        }
-        Expr::ArrayIndex{name,index} => {
-            match find_in_scopes(&scopes,name) {
-                Some(Identifier{variant:IdentifierVariant::Array{..},..}) => 
-                    Ok(Expr::ArrayIndex{name:name.clone(),index:Box::new(reduce_const(scopes,index)?)}),
-                _ => Err(format!("{name} does not name an array in scope {}",scopes.last().unwrap().name)),
-            }
-        },
-        Expr::FnCall{name,args} => {
-            match find_in_scopes(&scopes,name) {
-                Some(Identifier{variant:IdentifierVariant::Function{params,..},..}) => // only compile arguments that are of VALUE/REF type, since arrays are seens as variables, that aren't variables in this scope
-                    Ok(Expr::FnCall{
-                        name:name.clone(),
-                        args:args.iter().zip(params.iter()).map(|(arg,param)|
-                            if !matches!(param,FnParam::Array(_)) {
-                                reduce_const(scopes,arg)
-                            } else {Ok(arg.clone())}
-                        ).collect::<Result<Vec<_>,_>>()?
-                    }),
-                _ => Err(format!("{name} does not name a function in scope {}",scopes.last().unwrap().name)),
-            }
-        },
     }
 }
 
 
-
-
-
-
-
-
-/// Attempt to evaluate expression as a constant, given a list of scopes
-pub fn const_expr_eval(scopes:&Vec<Scope>,expr:&Expr) -> Result<i32,Error> {
-    let expr = reduce_const(scopes,expr)?;
-    if let Expr::Num(x) = expr {
-        Ok(x)
-    } else {
-        Err(format!("Expression {expr:?} cannot be computed as a constant"))
-    }
-}
-
-
-
-
-
-
-
-
-
-
-
-/*
-
-    idea:
-        calculate and expression, storing the result in REG
-
-
-    howwww
-
-    const -> write const to REG
-    variable -> write value of variable to REG
-    op -> 
-        for all inputs, calculate their values
-            if inputs are const or var, use those
-            else, create/claim temp variable and use that
-        calculate and store results of op, using inputs
-        release temp variables, if appliccable
-    unary -> see op
-    enum -> unreachable
-    arrayindex ->
-        essentially like unary
-            input is index
-    fncall ->
-        check if input format matches function parameters
-            reference must be a variable
-            array must be "variable"->array
-        for all pass-by-values:
-            treat like op/unary
-        add fncall
-            special for system call?
-        release vars
-
-
-
-    implementation using Option<Reg> -> Option<usize>
-    if Reg is not defined (used in recursive calls):
-        if variable/constant:
-            return that,None
-        else:
-            get temp var as new reg
-        
-    calculate
-    if reg WAS provided
-        return instr, None
-    else
-        return instr, temp
-
-
-    does this introduce the temp vars too early?
-    maybe
-    get temp var only AFTER processing the data
-
-
-    if function is called with reg:
-        result is stored in reg
-    if not:
-        function returns reg containing result
-        and possibly temp var that has to be released after reading
-
-    if result is stored in reg:
-        reg_lhs,temp_lhs = calc(lhs)
-        reg_rhs,temp_rhs = calc(rhs)
-        release temp_rhs
-        release temp_lhs
-
-        reg_out,temp_out = (reg,none or Rel(>),temp())
-        op(reg_lhs,reg_rhs,reg_out)
-        return reg_out,temp_out
-
-
-
-
-*/
-
-
-
-/// Generate instructions for processing an expression
-/// Assumes expression has been reduced to constants beforehand (i.e. variables are not constants, no enum variants)
-/// and variables/arrays have been checked to exist
-fn calc_expression(
-    scopes: &mut Vec<Scope>,
-    expr:&Expr,
-    reg:Option<Reg> /* memory location to store result in */
-) -> Result<(Vec<MkInstr>,Reg,Option<usize>),Error> {
-    debug!(" > CALC EXPR {:?}",expr);
-
-    fn get_reg(scopes:&mut Vec<Scope>,reg:Option<Reg>) -> (Reg,Option<usize>) {
-        if let Some(r) = reg {
-            (r,None)
-        } else {
-            let tv=scopes.last_mut().unwrap().get_tmp();
-            (Reg::Var(StackRef::Rel(-(tv as i32))),Some(tv))
-        }
-    }
-
-    Ok(match expr {
-        Expr::Num(x) => {
-            if let Some(r)=reg {
-                let mut instr = Vec::new();
-                instr.push(MkInstr::Instr(Instr::UnaryOperator{op:UnaryOperator::Nop,rhs:Reg::Const(*x),res:r}));
-                (instr,r,None) // store constant in reg
-            } else {
-                (Vec::new(),Reg::Const(*x),None) //just return the constant
-            }
-        }
-        Expr::Variable(name) => {
-            let rhs = match find_in_scopes(scopes,name) {
-                Some(Identifier{variant:IdentifierVariant::Variable{reg:r,..},..}) => *r,
-                // Some(Identifier{variant:IdentifierVariant::VariableRef{reg:r},..}) => *r,
-                _ => unreachable!(), // code was checked during reduce_const step, and should only have (referenced) variables
-            };
-
-            if let Some(r)=reg {
-                let mut instr = Vec::new();
-                instr.push(MkInstr::Instr(Instr::UnaryOperator{op:UnaryOperator::Nop,rhs,res:r})); // store variable
-                (instr,r,None)
-            } else {
-                (Vec::new(),rhs,None) // just return variable
-            }
-        }
-        Expr::Op{op,lhs,rhs} => {
-            let (    instr_lhs,reg_lhs,tmp_lhs) = calc_expression(scopes,lhs,None)?;
-            let (mut instr_rhs,reg_rhs,tmp_rhs) = calc_expression(scopes,rhs,None)?;
-            if let Some(tv)=tmp_rhs {scopes.last_mut().unwrap().release_tmp(tv);}
-            if let Some(tv)=tmp_lhs {scopes.last_mut().unwrap().release_tmp(tv);}
-            
-            let (reg,tv) = get_reg(scopes,reg);
-
-            let mut instr = instr_lhs;
-            //instr.append(instr_lhs);
-            instr.append(&mut instr_rhs);
-            instr.push(MkInstr::Instr(Instr::BinaryOperator{op:*op,lhs:reg_lhs,rhs:reg_rhs,res:reg}));
-            (instr,reg,tv)
-        },
-        Expr::Unary{op,rhs} => {
-            let (mut instr,reg_rhs,tmp_rhs) = calc_expression(scopes,rhs,None)?;
-            if let Some(tv)=tmp_rhs {scopes.last_mut().unwrap().release_tmp(tv);}
-            
-            let (reg,tv) = get_reg(scopes,reg);
-        
-            instr.push(MkInstr::Instr(Instr::UnaryOperator{op:*op,rhs:reg_rhs,res:reg}));
-            (instr,reg,tv)
-        },
-        Expr::ArrayIndex{name,index} => {
-            // compute index, add indexing instr
-            let (mut instr,reg_index,tmp_index) = calc_expression(scopes,index,None)?;
-            if let Some(tv)=tmp_index {scopes.last_mut().unwrap().release_tmp(tv);}
-            
-            let (reg,tv) = get_reg(scopes,reg);
-
-            let array = match find_in_scopes(scopes,name) {
-                Some(Identifier{variant:IdentifierVariant::Array{reg:r,..},..}) => *r,
-                // Some(Identifier{variant:IdentifierVariant::ArrayRef{reg:r},..}) => *r,
-                _ => unreachable!(),
-            };
-        
-            instr.push(MkInstr::Instr(Instr::ArrayIndex{array:array,index:reg_index,res:reg}));
-            (instr,reg,tv)
-        },
-        Expr::FnCall{name,args} => {
-            // get function from scopes
-            // check number of arguments
-            // per argument:
-                // check argument type
-                    // evaluate expr -> reg, of which the VALUE will be copied - store any temp vars created
-                    // ref -> reg, of which the STACK POS will be copied
-                    // array -> reg:array, 
-            // get return register
-            // call function
-            // free temp registers
-
-            let mut instr = Vec::new();
-            let mut tvs:Vec<Option<usize>> = Vec::new(); //to store temp vars
-        
-            // get function
-            let fnid = find_in_scopes(scopes,name).unwrap().clone();
-
-            // get args
-            let (params,is_syscall) = match fnid {
-                Identifier{variant:IdentifierVariant::Function{params,sys},..} => (params,sys),
-                _=>unreachable!(),
-            };
-
-            // check number of args
-            if params.len() != args.len() {
-                return Err(format!("Function {name} expected {} arguments but received {}",params.len(),args.len()));
-            }
-
-            // parse arguments
-            let params = args.iter().zip(params.iter()).map(|(val,param)| 
-                Ok::<FnArg,Error>(match param {
-                    FnParam::Value(_) => {
-                        // argument can be any expression
-                        let (mut i,reg,tv) = calc_expression(scopes,val,None)?;
-                        instr.append(&mut i);
-                        tvs.push(tv);
-                        FnArg{reg,mode:FnArgMode::Value}
-                    }
-                    FnParam::Reference(_) => {
-                        // argument must be a variable(name) where name refers to any (ref)variable
-                        if let Expr::Variable(name) = val {
-                            match find_in_scopes(scopes,name).unwrap() {
-                                Identifier{variant:IdentifierVariant::Variable{reg,..},..} =>
-                                    FnArg{reg:*reg,mode:FnArgMode::Reference},
-                                _=>unreachable!(),
-                            }
-                        } else {unreachable!();}
-                    }
-                    FnParam::Array(_) => {
-                        // argument must be Variable(name) where name refers to an array
-                        if let Expr::Variable(name) = val {
-                            match find_in_scopes(scopes,name).unwrap() {
-                                Identifier{variant:IdentifierVariant::Array{reg,..},..} =>
-                                    FnArg{reg:*reg,mode:FnArgMode::Reference},
-                                _=>unreachable!(),
-                            }
-                        } else {unreachable!();}
-                    }
-                })
-            ).collect::<Result<Vec<FnArg>,_>>()?;
-
-            // get output register
-            let (reg,tv) = get_reg(scopes,reg);
-
-            // call function
-            if !is_syscall {
-                instr.push(MkInstr::Instr(Instr::FnCall { index: fnid.name.clone()+".START", params, res: reg, stack: fnid.name.clone() }));
-            } else {
-                instr.push(MkInstr::Instr(Instr::SystemCall { params, res: reg, call: name.clone() }));
-            }
-            // free variables
-            for tv in tvs {
-                if let Some(tv)=tv {scopes.last_mut().unwrap().release_tmp(tv);}
-            }
-
-
-            (instr,reg,tv)
-        },
-        Expr::EnumVariant{..} => unreachable!(), // enum variants should have been converted to const already
-    })
-}
-
-
-
-
-
-
-
-
-
-fn recursive_compile(statements:Vec<Statement>,scopes:&mut Vec<Scope>,fnsizes:&mut HashMap<String,usize>) -> Result<(Vec<MkInstr>,Vec<MkInstr>),Error> {
-    debug!("Starting compilation of scope {}",&scopes.last().unwrap().name);
-    let mut instr:Vec<MkInstr> = Vec::new();
-    let mut functions:Vec<MkInstr> = Vec::new(); //for functions placed after this one
-
-    // first, register all elements in the current scope
-    // should we do this? just functions maybe?
-    for statement in statements.iter() {
-        debug!("Precompiling statement {:?}",statement);
-        match statement {
-            Statement::VarDef{vars,r#type} => {
-                // put variables into top scope
-                let scope = scopes.last_mut().unwrap();
-                for name in vars {
-                    scope.insert(
-                        name.clone(),
-                        IdentifierVariant::Variable{
-                            r#type:r#type.clone(),
-                            reg:Reg::Var(
-                                if scope.global {
-                                    StackRef::Abs(-(scope.variables as i32)) // depends on stack size of main program, which is unknown - maybe take abs0!=stack0... temporarily? fix them later? is ugly but oh well I suppose it needs to be done
-                                } else {
-                                    StackRef::Rel(-(scope.variables as i32))
-                                }
-                            )
-                        }
-                    )?;
-                    scope.variables += 1;
-                    scope.max_variables += 1;
-                }
-            }
-            Statement::ArrayDef{arrays,r#type} => {
-                // put arrays into top scope
-                for (name,size) in arrays {
-                    let size = const_expr_eval(&scopes, &size)?;
-                    let scope = scopes.last_mut().unwrap();
-                    if size<0 || size as usize > MAX_ARRAY_LEN {
-                        return Err(format!("Array length {size} for array {name} in scope {} invalid",scope.name));
-                    }
-                    let size = size as usize;
-                    scope.insert(
-                        name.clone(),
-                        IdentifierVariant::Array{
-                            r#type:r#type.clone(),
-                            // size:size,
-                            reg:Reg::Array(
-                                if scope.global {
-                                    StackRef::Abs(-((scope.variables+size-1) as i32))
-                                } else {
-                                    StackRef::Abs(-((scope.variables+size-1) as i32))
-                                },
-                                size
-                            )
-                        }
-                    )?;
-                    scope.variables += size;
-                    scope.max_variables += size;
-                }
-            }
-            Statement::FnDef{name,params,..} => {
-                // put function name and parameters into top scope
-                scopes.last_mut().unwrap().insert(
-                    ScopeVariant::Function.prefix() + name, 
-                    IdentifierVariant::Function{params:params.clone(),sys:false}
-                )?;
-            }
-            Statement::ConstDef{name,value} => {
-                // put const into top scope
-                // constants are evaluated NOW so they can only use constants that were defined previously
-                let value = const_expr_eval(scopes,&value)?;
-                scopes.last_mut().unwrap().insert(
-                    name.clone(),
-                    IdentifierVariant::Constant{value}
-                )?;
-            }
-            Statement::EnumDef{name,variants} => {
-                // enums
-                // note that multiple enum variants may have the same value, but not name
-                // they essentially act as bundled constants
-                let mut counted_variants:HashMap<String,i32> = HashMap::new();
-                let mut i:i32=-1;
-                for (variant,value) in variants.into_iter() {
-                    i = match value {Some(v)=>const_expr_eval(scopes,&v)?, _=>i+1};
-                    let old = counted_variants.insert(variant.clone(),i);
-                    if let Some(_) = old {return Err(format!("Enum variant {variant} of enum {name} in scope {} is already defined",scopes.last().unwrap().name));}
-                }
-                // put enum into top scope
-                scopes.last_mut().unwrap().insert(
-                    name.clone(),
-                    IdentifierVariant::Enum{
-                        variants:counted_variants
-                    }
-                )?;
-            }
-            _ => {}
-        }
-    }
-
-
-    let mut cnt_blk = 0u32;
-    let mut cnt_if  = 0u32;
-    let mut cnt_loop = 0u32;
-    let mut cnt_while = 0u32;
-
-
-
-    // then, do the actual compilation to a format full of references (as number of variables on stack etc. and indices of functions are still uncertain)
-    for statement in statements.into_iter() {
-        debug!("Fully compiling statement {:?}",statement);
-        match statement {
-            Statement::VarAssign{name,value} => {
-                debug!(" > starting compiling varassign");
-                debug!(" > reduce const");
-                let value = reduce_const(scopes,&value)?;
-
-                debug!(" > find variable");
-                let reg = match find_in_scopes(scopes,&name) {
-                    Some(Identifier{variant:IdentifierVariant::Variable{reg,..},..}) => *reg,
-                    _ => unreachable!(),
-                };
-
-                debug!(" > compile expr");
-                let (mut i,_,_) = calc_expression(scopes,&value,Some(reg))?;
-                instr.append(&mut i);
-                debug!(" > finished compiling varassign");
-
-            }
-            Statement::ArrayAssign{name,index,value} => {
-                // compute index
-                // compute value
-                // assign to array
-                let index = reduce_const(scopes,&index)?;
-                let value = reduce_const(scopes,&value)?;
-
-                let (mut i,reg_index,tv_index) = calc_expression(scopes,&index,None)?;
-                instr.append(&mut i);
-
-                let (mut i,reg_value,tv_value) = calc_expression(scopes,&value,None)?;
-                instr.append(&mut i);
-
-                if let Some(tv) = tv_value {scopes.last_mut().unwrap().release_tmp(tv);}
-                if let Some(tv) = tv_index {scopes.last_mut().unwrap().release_tmp(tv);}
-
-                let reg = match find_in_scopes(scopes,&name) {
-                    Some(Identifier{variant:IdentifierVariant::Array{reg,..},..}) => *reg,
-                    _ => unreachable!(),
-                };
-
-                instr.push(MkInstr::Instr(Instr::ArrayAssign{array:reg,index:reg_index,value:reg_value}));
-            }
-
-            Statement::If{condition,code} => {
-                let condition = reduce_const(&scopes,&condition)?;
-                // open up if scope
-                // add computations for computing expression
-                // add conditional jump to END of scope
-                // add instructions for code
-                // register scope data
-                // pop scope
-                let scope = scopes.last().unwrap().create_sub(format!("{}",cnt_if),ScopeVariant::If);
-                cnt_if+=1;
-
-                instr.push(MkInstr::Marker(scope.name.clone()+".START")); // not really needed, but useful for clarity
-
-                let (mut i,reg,tv) = calc_expression(scopes,&condition,None)?;
-                instr.append(&mut i);
-                instr.push(MkInstr::Instr(Instr::JumpUnless{index:scope.name.clone()+".END",condition:reg}));
-                if let Some(tv) = tv {scopes.last_mut().unwrap().release_tmp(tv);}
-
-                let (mut i,mut i_fn)=recursive_compile(vec![*code],scopes,fnsizes)?;
-                instr.append(&mut i);
-                functions.append(&mut i_fn);
-
-                instr.push(MkInstr::Marker(scope.name.clone()+".END"));
-
-                let scope = scopes.pop().unwrap();
-                scopes.last_mut().unwrap().absorb_sub(scope);
-            }
-            Statement::IfElse{condition,yes,no} => {
-                let condition = reduce_const(scopes,&condition)?;
-                // like if, but at end of first code jump to end of second instr
-                let scope = scopes.last().unwrap().create_sub(format!("{}",cnt_if),ScopeVariant::If);
-                cnt_if+=1;
-
-                instr.push(MkInstr::Marker(scope.name.clone()+".START")); //not really needed
-
-                let (mut i,reg,tv) = calc_expression(scopes,&condition,None)?;
-                instr.append(&mut i);
-                instr.push(MkInstr::Instr(Instr::JumpUnless{index:scope.name.clone()+".ELSE",condition:reg}));
-                if let Some(tv) = tv {scopes.last_mut().unwrap().release_tmp(tv);}
-
-                let (mut i,mut i_fn)=recursive_compile(vec![*yes],scopes,fnsizes)?;
-                instr.append(&mut i);
-                functions.append(&mut i_fn);
-
-                instr.push(MkInstr::Instr(Instr::Jump{index:scope.name.clone()+".END"}));
-                instr.push(MkInstr::Marker(scope.name.clone()+".ELSE"));
-
-                let (mut i,mut i_fn)=recursive_compile(vec![*no],scopes,fnsizes)?;
-                instr.append(&mut i);
-                functions.append(&mut i_fn);
-
-                instr.push(MkInstr::Marker(scope.name.clone()+".END"));
-
-                let scope = scopes.pop().unwrap();
-                scopes.last_mut().unwrap().absorb_sub(scope);
-            }
-            Statement::While{condition,code} => {
-                let condition = reduce_const(scopes,&condition)?;
-                // open up while scope
-                // add computations for computing expression
-                // add conditional JUMP to end of scope
-                // add instructions for code
-                // add JUMP to START of while scope
-                // register scope data
-                // pop scope
-                let scope = scopes.last().unwrap().create_sub(format!("{}",cnt_while),ScopeVariant::Loop);
-                cnt_while+=1;
-
-                instr.push(MkInstr::Marker(scope.name.clone()+".START"));
-
-                let (mut i,reg,tv) = calc_expression(scopes,&condition,None)?;
-                instr.append(&mut i);
-                instr.push(MkInstr::Instr(Instr::JumpUnless{index:scope.name.clone()+".END",condition:reg}));
-                if let Some(tv) = tv {scopes.last_mut().unwrap().release_tmp(tv);}
-
-                let (mut i,mut i_fn)=recursive_compile(vec![*code],scopes,fnsizes)?;
-                instr.append(&mut i);
-                functions.append(&mut i_fn);
-
-                let scope = scopes.pop().unwrap();
-
-                instr.push(MkInstr::Instr(Instr::Jump{index:scope.name.clone()+".START"}));
-                instr.push(MkInstr::Marker(scope.name.clone()+".END"));
-                
-                scopes.last_mut().unwrap().absorb_sub(scope);
-            }
-            Statement::Loop(code) => {
-                // open up loop scope
-                // parse code
-                // register max number of variables in scope
-                // pop loop scope
-                // add JUMP to start of current scope
-                let scope = scopes.last().unwrap().create_sub(format!("{}",cnt_loop),ScopeVariant::Loop);
-                cnt_loop+=1;
-
-                instr.push(MkInstr::Marker(scope.name+".START"));
-
-                let (mut i,mut i_fn)=recursive_compile(vec![*code],scopes,fnsizes)?;
-                instr.append(&mut i);
-                functions.append(&mut i_fn);
-
-                let scope = scopes.pop().unwrap();
-
-                instr.push(MkInstr::Instr(Instr::Jump{index:scope.name.clone()+".START"}));
-                instr.push(MkInstr::Marker(scope.name.clone()+".END"));
-                
-                scopes.last_mut().unwrap().absorb_sub(scope);
-            }
-            Statement::Break => {
-                // find nearest scope that is loop or while
-                // fail when encountering fn scope
-                // jumpt to END of scope (i.e. exactly afterwards)
-                let loop_scope = find_scope_variant(scopes,&[ScopeVariant::While,ScopeVariant::Loop]);
-                if let Some(loop_scope)=loop_scope {
-                    instr.push(MkInstr::Instr(Instr::Jump{index:loop_scope.name.clone()+".END"}));
-                } else {
-                    return Err(format!("Break statement outside of loop in scope {}",scopes.last().unwrap().name))
-                }
-            }
-            Statement::Continue => {
-                // find nearest scope that is loop or while
-                // fail when encountering fn scope
-                // loop: jump to START of that scope (i.e. first instruction after)
-                // while: jump to before computation of condition
-                let loop_scope = find_scope_variant(scopes,&[ScopeVariant::While,ScopeVariant::Loop]);
-                if let Some(loop_scope)=loop_scope {
-                    instr.push(MkInstr::Instr(Instr::Jump{index:loop_scope.name.clone()+".START"}));
-                } else {
-                    return Err(format!("Continue statement outside of loop in scope {}",scopes.last().unwrap().name))
-                }
-            }
-            Statement::Return(value) => {
-                let value = reduce_const(scopes,&value.unwrap_or_else(||Expr::Num(0)))?;
-                // find parent fn scope
-                // return (value, parent_fn) if it is not global!!!
-                let fn_scope = find_scope_variant(scopes,&[ScopeVariant::Function]).unwrap();
-                if fn_scope.global {
-                    return Err(format!("Return statement outside of function in scope {}",scopes.last().unwrap().name))
-                }
-                let fn_name = fn_scope.name.clone();
-
-                let (mut i,reg,tv) = calc_expression(scopes,&value,None)?;
-                instr.append(&mut i);
-                if let Some(tv) = tv {scopes.last_mut().unwrap().release_tmp(tv);}
-                instr.push(MkInstr::Instr(Instr::Return{stack:fn_name,value:reg}));
-            }
-
-            Statement::Expr(expr) => {
-                // just an expression not assigned to a variable (mostly function calls)
-                // basically the same as variable assignment
-                // but use fake target address
-                // also, ignore if expr is constant
-                let expr = reduce_const(scopes,&expr)?;
-                let (mut i,_,_) = calc_expression(scopes,&expr,Some(Reg::Const(0)))?;
-                instr.append(&mut i);
-            }
-
-            Statement::CodeBlock(statements) => {
-                // create scope
-                // parse things in block
-                // register scope
-                // pop scope
-
-                let scope = scopes.last().unwrap().create_sub(format!("{}",cnt_blk),ScopeVariant::Block);
-                cnt_blk+=1;
-
-                scopes.push(scope);
-
-                let (mut i,mut i_fn) = recursive_compile(statements,scopes,fnsizes)?;
-                instr.append(&mut i);
-                functions.append(&mut i_fn);
-
-                let scope = scopes.pop().unwrap();
-                scopes.last_mut().unwrap().absorb_sub(scope);
-            }
-
-            // definitions already handled
-            Statement::VarDef{..} => {}
-            Statement::ArrayDef{..} => {}
-            Statement::ConstDef{..} => {}
-            Statement::EnumDef{..} => {}
-            
-            // compute function 
-            Statement::FnDef{name,params,code} => {
-                // determine code for function 
-                // must be appended to script after
-
-                // create function scope
-                // add parameters to scope
-                // parse the code of the function
-                // add instructions to functions
-                // register function size
-                // reabsorb scope
-                debug!(" > start compiling function");
-                
-                // make scope
-                let mut scope = scopes.last().unwrap().create_fn(name);
-                functions.push(MkInstr::Marker(scope.name.clone()+".START"));
-
-                // add params
-                for param in params.into_iter() {
-                    match param {
-                        FnParam::Value(name) =>
-                            scope.insert(
-                                name,
-                                IdentifierVariant::Variable{
-                                    reg:Reg::Var(StackRef::Rel(-(scope.variables as i32))),
-                                    r#type:None}).unwrap(),
-                        FnParam::Reference(name) =>
-                            scope.insert(
-                                name,
-                                IdentifierVariant::Variable{
-                                    reg:Reg::VarRef(StackRef::Rel(-(scope.variables as i32))),
-                                    r#type:None}).unwrap(),
-                        FnParam::Array(name) =>
-                        scope.insert(
-                            name,
-                            IdentifierVariant::Array{
-                                reg:Reg::ArrayRef(StackRef::Rel(-(scope.variables as i32))),
-                                r#type:None}).unwrap(),
-                    }
-                    scope.variables+=1;
-                    scope.max_variables+=1;
-                }
-                scopes.push(scope);
-
-                // parse code and add to functions
-                let (mut i,mut i_fn) = recursive_compile(code, scopes, fnsizes)?;
-                functions.append(&mut i);
-
-                let scope = scopes.pop().unwrap();
-                functions.push(MkInstr::Marker(scope.name.clone()+".END")); //mark end
-                fnsizes.insert(scope.name.clone(),scope.max_variables); //register size
-                scopes.last_mut().unwrap().absorb_sub(scope);
-
-                functions.append(&mut i_fn); // add subfunctions afterwards
-
-
-                // TODO set aside some things for system calls? they are special. need proper way to send output to outside of bugs
-                
-                debug!(" > finished compiling function");
-            }
-        }
-    }
-
-
-    // if this is a function, and if it does not already end on a return statement, and it is not the global scope, add a return statement
-    if matches!(scopes.last().unwrap().variant,ScopeVariant::Function{..}) && !scopes.last().unwrap().global{
-        if !matches!(
-            instr.iter().rev().filter(|mki| matches!(mki,MkInstr::Instr(_))).next(),
-            Some(MkInstr::Instr(Instr::Return{..}))
-        ) { //last instr (not marker!) is not a Return statement
-            instr.push(MkInstr::Instr(Instr::Return{stack:scopes.last().unwrap().name.clone(),value:Reg::Const(0)}));
-        }
-    }
-    
-
-    debug!("Finished compining scope");
-    // return stuff
-    Ok((instr,functions))
-}
-
-
-
-
-pub fn compile(statements:Vec<Statement>) -> Result<Vec<Instr<usize,String>>,Error> {
-
-    // initialise global scope
-    let mut scopes: Vec<Scope> = vec![
-        Scope{
-            name: "@builtin".to_string(),
-            global: true,
-            identifiers: HashMap::new(),
-            variant: ScopeVariant::Function,
-            tmp_vars: Vec::new(),
-            variables: 0, //no code
-            max_variables: 0,
-        },
-        Scope{
-            name: "@root".to_string(),
-            global: true,
-            identifiers: HashMap::new(),
-            variant: ScopeVariant::Function,
-            tmp_vars: Vec::new(),
-            variables: 2, //PC and ref dump
-            max_variables: 2,
-        },
-    ];
-
-    /// add some builtins
-    scopes[0].insert("print".to_string(),IdentifierVariant::Function{params:vec![FnParam::Value("x".to_string())],sys:true}).unwrap();
-    
-    
-    /// 
-
-    let mut fnsizes: HashMap<String,usize> = HashMap::new();
-
-    debug!("C: initial instructions");
-    let mut instr = Vec::new();
-    instr.push(MkInstr::Instr(Instr::Init{index:"@root.START".to_string(),stack:"@root".to_string()}));
-    instr.push(MkInstr::Marker("@root.START".to_string()));
-
-    debug!("C: recusive compile");
-    // recursively move through statements
-    let (mut code,mut functions) = recursive_compile(statements, &mut scopes, &mut fnsizes)?;
-    instr.append(&mut code);
-    fnsizes.insert("@root".to_string(),scopes.last().unwrap().max_variables);
-
-    // add JUMP to start of program (reboot after main has finished)
-    debug!("C: add jump to start and functions");
-    instr.push(MkInstr::Instr(Instr::Jump{index:"@root.START".to_string()}));
-
-    // add functions
-    instr.append(&mut functions);
-
-    debug!("C: reate markers");
-    // determine final locations of jumps
-    let mut markers:HashMap<String,usize> = HashMap::new();
-
-    let mut i:usize = 0;
-    for mkinstr in instr.iter() {
-        match mkinstr {
-            MkInstr::Marker(m) => {markers.insert(m.clone(),i);}
-            MkInstr::Instr(_) => {i+=1;}
-        }
-    }
-
-    debug!("C: replace markers and offset absolute stack relations");
-    // create final code, without markers, and with valid jump values, and with shifted ABS values and correct stack sizes
-    let global_size = *fnsizes.get("@root").unwrap();
-    Ok(instr
-        .into_iter()
-        .filter_map(|mki|
-            match mki {
-                MkInstr::Marker(_) => None,
-                MkInstr::Instr(i) => Some(i.fill_markers(&markers,&fnsizes,global_size as i32-1)),
-            })
-        .collect())
-        
-}
