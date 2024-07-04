@@ -5,48 +5,22 @@ use crate::compiler::{Instr,FnArg,StackRef,Reg,ArrayReg};
 // use crate::operators::{BinaryOperator,UnaryOperator};
 use std::marker::PhantomData;
 
-type Error = String;
-
-
-
-/// System calls are split into actual system calls, and builtin functions
-#[derive(Debug,Clone)]
-pub enum BuiltinOrSysCall<SC:Clone> {
-    Builtin(Builtin),
-    SysCall(SC),
-}
-
-/// Standard builting functions
-#[derive(Debug,Clone)]
-pub enum Builtin {
-    // normal
-    Swap,
-    Pow,
-    Min, // also for array O(n)
-    Max, //also for array O(n)
-
-    // array
-    Reverse, //O(n)
-    Len, //O(1)
-    Fill, // O(n)
-    Clear, // fill, but always 0, O(n)
-    Copy, // copy part of array into other array O(n)
-    Seq, // fill array witch sequence O(n)
-    Sort, // sort, possibly in reverse, O(nlogn)
-    Find, // get index of first occurence, else -1 O(n)
-}
+type RunError = String;
 
 
 
 
-pub struct CPU<SC: SysCall> {
+
+
+/// A simple CPU that can execute instructions, but does not handle any system calls
+pub struct CPU<SC:Clone> {
     pub memory: Vec<i32>,
     pub sp: usize, /* stack pointer == stack size-1; index of top of stack */
     phantom: PhantomData<SC>,
 }
 
 
-impl<SC:SysCall+Clone> CPU<SC> {
+impl<SC:Clone> CPU<SC> {
     // init
     pub fn new(stacksize:usize) -> Self {
         Self {
@@ -57,7 +31,7 @@ impl<SC:SysCall+Clone> CPU<SC> {
     }
 
     // main important thing: instruction execution
-    pub fn execute(&mut self, program: &Vec<Instr<usize,usize,BuiltinOrSysCall<SC>>>) -> Result<Option<(BuiltinOrSysCall<SC>,Vec<FnArg>,Reg)>,Error> {
+    pub fn execute(&mut self, program: &Vec<Instr<usize,usize,SC>>) -> Result<Option<(SC,Vec<FnArg>,Reg)>,RunError> {
         // get the PC
         let pc = self.memory[self.sp] as usize;
         
@@ -166,10 +140,25 @@ impl<SC:SysCall+Clone> CPU<SC> {
         }
     }
 
+    pub fn get_array_index(&self, reg:&ArrayReg, index:i32) -> Result<i32,RunError> {
+        // get reference to array, split into memory location and length
+        let (start,len) = self.get_array(reg);
+        if index<0 || index>=len as i32 {return Err("Array read out of range".to_string())}
+        Ok(self.memory[(start+index) as usize])
+    }
+
+    pub fn set_array_index(&mut self, reg:&ArrayReg, index:i32, value:i32) -> Result<(),RunError> {
+        // get reference to array, split into memory location and length
+        let (start,len) = self.get_array(reg);
+        if index<0 || index>=len as i32 {return Err("Array write out of range".to_string())}
+        self.memory[(start+index) as usize]=value;
+        Ok(())
+    }
+
     pub fn get_array_ref(&self, reg:&ArrayReg) -> i32 {
         // get reference to array, split into memory location and length
         match reg {
-            ArrayReg::Array(sr, len) => (self.stack_index(sr) as i32 | (len<<16) as i32),
+            ArrayReg::Array(sr, len) => self.stack_index(sr) as i32 | (len<<16) as i32,
             ArrayReg::ArrayRef(sr) => self.memory[self.stack_index(sr)],
         }
     }
@@ -181,14 +170,4 @@ impl<SC:SysCall+Clone> CPU<SC> {
             StackRef::Rel(rel) => (self.sp as i32+*rel) as usize,
         }
     }
-}
-
-
-
-
-
-
-pub trait SysCall {
-
-
 }

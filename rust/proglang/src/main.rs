@@ -3,18 +3,20 @@ use log::LevelFilter;
 mod parser;
 mod operators;
 mod compiler;
-mod cpu;
+mod simple_cpu;
+mod advanced_cpu;
 //mod separated_by_save;
 
 use parser::parser;
 use chumsky::Parser;
 
-use compiler::{Environment, SysCallParamCheck};
-use cpu::{CPU,SysCall,BuiltinOrSysCall};
+use compiler::SysCallParamCheck;
+use advanced_cpu::{CPU,BuiltinOrSysCall};
 
 #[derive(Debug,Clone)]
-struct SC {}
-impl SysCall for SC {}
+enum SC {
+    Print
+}
 
 fn main() {
     env_logger::builder().filter_level(LevelFilter::Debug).init();
@@ -24,9 +26,9 @@ fn main() {
     let parsed = parser().parse(src);
     println!("PARSED:\n{:#?}",parsed);
 
-    let instr = Environment::new()
+    let instr = CPU::compiler()
         .create_basescope("@sys".to_string())
-        .add_syscall("print".to_string(),BuiltinOrSysCall::SysCall(SC{}),SysCallParamCheck::Runtime).unwrap()
+        .add_syscall("print",BuiltinOrSysCall::SysCall(SC::Print),SysCallParamCheck::Runtime)
         .compile(parsed.unwrap());
     println!("INSTR:\n{:#?}",instr);
     let instr=instr.unwrap();
@@ -34,7 +36,7 @@ fn main() {
     let mut cpu = CPU::<SC>::new(20);
 
     loop {
-        println!("PC {}\tSP {}\tMEM {:?}\n{:?}\n",cpu.memory[cpu.sp],cpu.sp,cpu.memory,instr[cpu.memory[cpu.sp] as usize]);
+        println!("PC {}\tSP {}\tMEM {:?}\n{:?}\n",cpu.cpu.memory[cpu.cpu.sp],cpu.cpu.sp,cpu.cpu.memory,instr[cpu.cpu.memory[cpu.cpu.sp] as usize]);
         match cpu.execute(&instr) {
             Ok(Some(sc)) => println!("SYSCALL: {:?}",sc),
             Ok(None) => {}

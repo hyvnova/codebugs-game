@@ -233,7 +233,7 @@ pub enum IdentifierVariant<SystemCall> {
 
 #[derive(Debug,Clone)]
 pub enum SysCallParamCheck {
-    Pattern(Vec<FnParam>),
+    Pattern(Vec<FnParamVariant>),
     Match(fn(&Vec<FnParamVariant>) -> Result<(),Error>),
     Runtime,
 }
@@ -784,7 +784,7 @@ impl<SC:Clone+std::fmt::Debug> Environment<SC> {
 
                         match param_check {
                             SysCallParamCheck::Pattern(p) =>
-                                Environment::<SC>::check_fn_args(&p.iter().map(|param| param.variant).collect(),&arg_variants)?,
+                                Environment::<SC>::check_fn_args(p,&arg_variants)?,
                             SysCallParamCheck::Match(check) => check(&arg_variants)?,
                             SysCallParamCheck::Runtime => {}
                         }
@@ -1120,9 +1120,9 @@ impl<SC:Clone+std::fmt::Debug> Environment<SC> {
         self
     }
     /// Add system call to the scopes
-    pub fn add_syscall(&mut self, name:String, call: SC, check: SysCallParamCheck) -> Result<&mut Self,CompileError>{
-        self.scopes.last_mut().unwrap().insert_ident(name,IdentifierVariant::SysCall {param_check: check, call})?;
-        Ok(self)
+    pub fn add_syscall(&mut self, name:&str, call: SC, check: SysCallParamCheck) -> &mut Self{
+        self.scopes.last_mut().unwrap().insert_ident(name.to_string(),IdentifierVariant::SysCall {param_check: check, call}).unwrap();
+        self
     }
     /// Compile statements into instructions; this also adds the root scope
     pub fn compile(&mut self, program:Vec<Statement>) -> Result<Vec<Instr<usize,usize,SC>>,CompileError> {
