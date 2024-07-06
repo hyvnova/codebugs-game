@@ -20,7 +20,7 @@ enum SC {
 fn main() {
     env_logger::builder().filter_level(LevelFilter::Debug).init();
 
-    let src = std::fs::read_to_string("src/test.txt").unwrap();
+    let src = std::fs::read_to_string("src/test_bf.txt").unwrap();
 
     let parsed = parser().parse(src);
     println!("PARSED:\n{:#?}",parsed);
@@ -33,7 +33,7 @@ fn main() {
     println!("INSTR:\n{:#?}",instr);
     println!("META:\n{:#?}",meta);
 
-    let mut cpu = CPU::<SC>::new(20);
+    let mut cpu = CPU::<SC>::new(60);
 
     loop {
         // println!("PC {}\tSP {}\tMEM {:?}\n{:?}\n",cpu.cpu.memory[cpu.cpu.sp],cpu.cpu.sp,cpu.cpu.memory,instr[cpu.cpu.memory[cpu.cpu.sp] as usize]);

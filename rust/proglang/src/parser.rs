@@ -245,13 +245,14 @@ pub fn parser() -> impl Parser<char, Vec<Statement>, Error=Simple<char>> {
             .then_ignore(just(';'))
             .padded();
 
-        let enumdef = text::keyword("const").ignore_then(text::whitespace())
+        let enumdef = text::keyword("enum").ignore_then(text::whitespace())
             .ignore_then(text::ident())
             .then_ignore(just('=').padded())
             .then(
                 text::ident().padded()
                 .then(just('=').ignore_then(expr.clone()).or_not())
                 .separated_by(just(','))
+                .allow_trailing()
                 .delimited_by(just('{'),just('}'))
             )
             .map(|(name,variants)| Statement::EnumDef{name,variants})

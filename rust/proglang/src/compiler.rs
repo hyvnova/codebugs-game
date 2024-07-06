@@ -7,7 +7,7 @@
 - add a way to manually add global variables? would require @root to start at higher `stack_vars`, as well as a proper interface (since unfortunately, the Abs Refence stuff needs to be shifted - maybe shift before any normal/root scopes? that could work)
 - allow arrayindex to be parsed as a referenced variable
 - array slicing (would require parser changes too)
-
+- conditional compilation of if/ifelse/while statements for constant conditions
 */
 
 /*
