@@ -85,6 +85,7 @@ impl<SC:Clone> CPU<SC> {
                 self.sp-=stack;
             }
             Instr::Init { stack, index } => {
+                self.memory[self.sp]-=1; //undo initial +1
                 self.sp=*stack-1;
                 self.memory[self.sp]=*index as i32;
             }
