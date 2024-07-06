@@ -2,6 +2,7 @@
 
 
 use crate::compiler::{Instr,FnArg,StackRef,Reg,ArrayReg};
+use crate::compiler::{ProgramMeta,ScopeMetaVariant,VarMetaVariant};
 // use crate::operators::{BinaryOperator,UnaryOperator};
 use std::marker::PhantomData;
 
@@ -170,4 +171,133 @@ impl<SC:Clone> CPU<SC> {
             StackRef::Rel(rel) => (self.sp as i32+*rel) as usize,
         }
     }
+
+
+
+
+
+
+// debug
+
+    pub fn annotate_stack(&self, meta:&ProgramMeta) -> Vec<MemMeta> {
+        let mut sp = self.sp;
+        
+        let mut stack = Vec::with_capacity(self.memory.len());
+        for i in 0..self.memory.len() {stack.push(MemMeta{
+            name:"-".to_string(),
+            r#type:None,
+            value:format!("({})",
+            self.memory[i]),
+            variant: MemMetaVariant::Unused,
+        })}
+
+        'outer: loop {
+            let pc = self.memory[sp];
+
+            stack[sp] = MemMeta{
+                name: "<PC>".to_string(),
+                r#type: None,
+                value: format!("{pc:#04X}"),
+                variant: MemMetaVariant::PC,
+            };
+
+            if sp>0 {
+                stack[sp-1] = MemMeta{
+                    name: "<&res>".to_string(),
+                    r#type: None,
+                    value: format!("{:#06X}",self.memory[sp-1]),
+                    variant: MemMetaVariant::Result,
+                };
+            }
+
+            for tmp in &meta.instr[pc as usize].tmp_vars {
+                let index = (sp as i32+tmp) as usize;
+                stack[index] = MemMeta{
+                    name: format!("<TMP{}>",-tmp),
+                    r#type: None,
+                    value: format!("{}",self.memory[index]),
+                    variant: MemMetaVariant::TMP,
+                }
+            }
+
+            let mut scope = &meta.instr[pc as usize].scope;
+            loop {
+                let scope_meta = meta.scopes.get(scope).unwrap();
+                for var in &scope_meta.variables {
+
+                    for i in 0..(if let VarMetaVariant::Array(len) = var.variant {len} else {1}) {
+                        let index = (sp as i32+var.pos) as usize + i;
+                        let stack_meta=&mut stack[index];
+
+                        stack_meta.name=match var.variant {
+                            VarMetaVariant::Val => var.name.clone(),
+                            VarMetaVariant::Ref => format!("&{}",var.name),
+                            VarMetaVariant::Array(_) => format!("{}[{i}]",var.name),
+                            VarMetaVariant::ArrayRef => format!("{}[]",var.name),
+                        };
+
+                        stack_meta.variant=match var.variant {
+                            VarMetaVariant::Val => MemMetaVariant::Var,
+                            VarMetaVariant::Ref => MemMetaVariant::VarRef,
+                            VarMetaVariant::Array(_) => MemMetaVariant::Array,
+                            VarMetaVariant::ArrayRef => MemMetaVariant::ArrayRef,
+                        };
+
+                        stack_meta.r#type=var.r#type.clone();
+
+                        stack_meta.value=match var.variant {
+                            VarMetaVariant::Val => format!("{}",self.memory[index]),
+                            VarMetaVariant::Ref => format!("{:#06X}",self.memory[index]),
+                            VarMetaVariant::Array(_) => format!("{}",self.memory[index]),
+                            VarMetaVariant::ArrayRef => {
+                                let (a,l) = self.get_array(&ArrayReg::ArrayRef(StackRef::Rel(var.pos)));
+                                format!("{a:#06X}[{l}]")
+                            }
+                        };
+                    }
+                }
+                
+                match &scope_meta.variant {
+                    ScopeMetaVariant::Function(stacksize) => {
+                        if *stacksize <= sp { //not the top scope, move on to function below
+                            // println!("SP {sp} STACKSIZE {stacksize}");
+                            sp -= *stacksize;
+                            break;
+                        } else { //top scope; stop
+                            break 'outer;
+                        }
+                    },
+                    ScopeMetaVariant::Sub(parent) => scope=&parent,
+                }
+            }
+
+
+        }
+
+        stack
+    }
+
+
+
+}
+
+
+/// Annotated stack data
+pub struct MemMeta { // can be a value, array value, ref, or array ref
+    //index
+    pub name: String, //var
+    pub r#type: Option<String>, //
+    pub value: String,
+    pub variant: MemMetaVariant,
+}
+
+pub enum MemMetaVariant {
+    PC,
+    Result,
+    Var,
+    VarRef,
+    Array,
+    ArrayRef,
+    TMP,
+    Unused,
 }

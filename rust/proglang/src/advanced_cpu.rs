@@ -135,7 +135,7 @@ impl<SC:std::fmt::Debug+Clone> CPU<SC> {
 
 
     /// Create compilation environment for this CPU.
-    pub fn compiler() -> Environment<BuiltinOrSysCall<SC>> {
+    pub fn compiler() -> Environment<BuiltinOrSysCall<SC>> {//Environment<BuiltinOrSysCall<SC>> {
         let mut env = Environment::new();
         env
             .create_basescope("@builtin".to_string())

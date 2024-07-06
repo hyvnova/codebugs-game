@@ -2,6 +2,8 @@
 var x,y;
 const Z = 4;
 
+array bleh[4];
+
 x = 1;
 
 fn foo(a,&b) {

@@ -1,6 +1,10 @@
 /* TODO:
 
-- syscalls
+- disallow variable reading before value has been set (global vars are difficult)
+- array declaration might fail if the first definition in a scope is an array with size 0? probably not
+- a way to track stack meaning for debugging: keep list of scopes, their parent scopes, where the variables are at and, for functions, their total stack size
+- add methods for adding constants and enums to environement
+- add a way to manually add global variables? would require @root to start at higher `stack_vars`, as well as a proper interface (since unfortunately, the Abs Refence stuff needs to be shifted - maybe shift before any normal/root scopes? that could work)
 - allow arrayindex to be parsed as a referenced variable
 - array slicing (would require parser changes too)
 
@@ -82,7 +86,7 @@ pub enum FnArg {
 // Marker or Instruction
 #[derive(Debug)]
 enum MkOrInstr<SC> {
-    Instr(Instr<String,String,SC>),
+    Instr(Instr<String,String,SC>,InstrMeta),
     Marker(String),
 }
 
@@ -141,9 +145,6 @@ pub enum Instr<ProgramIndex,StackSize,SystemCall> {
 
 
 
-
-
-
 /*
 
 get value:
@@ -187,11 +188,6 @@ pub enum StackRef {
     Rel(i32), // relative to top of stack
     Abs(i32), // stack index
 }
-
-
-
-
-
 
 
 
@@ -274,15 +270,70 @@ struct Scope<SystemCall> {
 }
 
 
+
+/// Meta data about instruction, for debug purposes.
+#[derive(Debug,Clone)]
+pub struct InstrMeta {
+    pub scope: String, //maybe replace with usize for efficiency
+    pub tmp_vars: Vec<i32>, //or StackRef
+}
+
+/// Meta data about scopes, for debug purposes.
+#[derive(Debug,Clone)]
+pub struct ScopeMeta {
+    pub variant: ScopeMetaVariant,
+    pub variables: Vec<VarMeta>,
+}
+/// Meta data about memory psition
+#[derive(Debug,Clone)]
+pub struct VarMeta {
+    pub pos: i32, // or StackRef?
+    pub name: String,
+    pub r#type: Option<String>,
+    pub variant: VarMetaVariant,
+
+}
+#[derive(Debug,Clone)]
+pub enum VarMetaVariant {
+    Val, //memory has a value
+    Ref, //memory holds index of value
+    Array(usize), //memory holds values, for this length
+    ArrayRef, //memory holds index and length of array
+}
+#[derive(Debug,Clone)]
+pub enum ScopeMetaVariant {
+    Function(usize), //size of function
+    Sub(String), //parent scope
+}
+/// Meta data about a program, for debug purposes.
+#[derive(Debug,Clone)]
+pub struct ProgramMeta {
+    pub scopes: HashMap<String,ScopeMeta>,
+    pub instr: Vec<InstrMeta>,
+}
+
+
+
+
+
 pub struct Environment<SC> {
     scopes: Vec<Scope<SC>>,
     fn_sizes: HashMap<String,usize>, //stack size per function
     global_size: usize, //stack size of root
+    meta: ProgramMeta,
 }
 
 
 impl<SC:Clone+std::fmt::Debug> Environment<SC> {
 // compilation:
+
+    /// Helper function for getting current instruction meta data.
+    fn imeta(&self) -> InstrMeta {
+        InstrMeta{
+            scope: self.get_scope_name().clone(),
+            tmp_vars: vec![], //TODO: keep track of tmp vars currently in use
+        }
+    }
 
     /// Compile statements into current scope
     /// Instructions are added to `instr`.
@@ -316,24 +367,33 @@ impl<SC:Clone+std::fmt::Debug> Environment<SC> {
             match statement {
                 Statement::VarDef{vars,r#type} => {
                     // put variables into top scope
-                    let scope = self.scopes.last_mut().unwrap();
                     for name in vars {
+                        let scope = self.scopes.last_mut().unwrap();
+                        let pos = -(scope.stack_vars as i32);
                         scope.insert_ident(
                             name.clone(),
                             IdentifierVariant::Variable{
                                 r#type:r#type.clone(),
                                 reg:Reg::Var(
                                     if scope.global {
-                                        StackRef::Abs(-(scope.stack_vars as i32)) // depends on stack size of main program, which is unknown - maybe take abs0!=stack0... temporarily? fix them later? is ugly but oh well I suppose it needs to be done
+                                        StackRef::Abs(pos) // depends on stack size of main program, which is unknown - maybe take abs0!=stack0... temporarily? fix them later? is ugly but oh well I suppose it needs to be done
                                     } else {
-                                        StackRef::Rel(-(scope.stack_vars as i32))
+                                        StackRef::Rel(pos)
                                     }
                                 )
                             }
                         )?;
                         scope.stack_vars += 1;
                         scope.stack_max += 1;
+
+                        self.meta.scopes.get_mut(&self.scopes.last().unwrap().name).unwrap().variables.push(VarMeta{
+                            pos,
+                            name: name.clone(),
+                            r#type: r#type.clone(),
+                            variant: VarMetaVariant::Val,
+                        });
                     }
+                    
                 }
                 Statement::ArrayDef{arrays,r#type} => {
                     // put arrays into top scope
@@ -344,15 +404,17 @@ impl<SC:Clone+std::fmt::Debug> Environment<SC> {
                             return Err(format!("Array length {size} for array {name} in scope {} invalid",scope.name));
                         }
                         let size = size as usize;
+                        
+                        let pos = -((scope.stack_vars+size-1) as i32);
                         scope.insert_ident(
                             name.clone(),
                             IdentifierVariant::Array{
                                 r#type:r#type.clone(),
                                 reg:ArrayReg::Array(
                                     if scope.global {
-                                        StackRef::Abs(-((scope.stack_vars+size-1) as i32))
+                                        StackRef::Abs(pos)
                                     } else {
-                                        StackRef::Abs(-((scope.stack_vars+size-1) as i32))
+                                        StackRef::Abs(pos)
                                     },
                                     size
                                 )
@@ -360,6 +422,13 @@ impl<SC:Clone+std::fmt::Debug> Environment<SC> {
                         )?;
                         scope.stack_vars += size;
                         scope.stack_max += size;
+
+                        self.meta.scopes.get_mut(&self.scopes.last().unwrap().name).unwrap().variables.push(VarMeta{
+                            pos: pos,
+                            name: name.clone(),
+                            r#type: r#type.clone(),
+                            variant: VarMetaVariant::Array(size),
+                        });
                     }
                 }
                 Statement::FnDef{name,params,..} => {
@@ -453,7 +522,7 @@ impl<SC:Clone+std::fmt::Debug> Environment<SC> {
                         _ => unreachable!(),
                     };
 
-                    instr.push(MkOrInstr::Instr(Instr::ArrayAssign{array:reg,index:reg_index,value:reg_value}));
+                    instr.push(MkOrInstr::Instr(Instr::ArrayAssign{array:reg,index:reg_index,value:reg_value},self.imeta()));
                 }
 
                 Statement::If{mut condition,code} => {
@@ -470,7 +539,7 @@ impl<SC:Clone+std::fmt::Debug> Environment<SC> {
                     self.preprocess_expr(&mut condition)?;
 
                     let (reg,tv) = self.compile_expr(condition, instr,None)?;
-                    instr.push(MkOrInstr::Instr(Instr::JumpUnless{index:self.get_scope_name().clone()+".END",condition:reg}));
+                    instr.push(MkOrInstr::Instr(Instr::JumpUnless{index:self.get_scope_name().clone()+".END",condition:reg},self.imeta()));
                     self.release_tmp(tv);
 
                     self.compile_statements(vec![*code],instr,instr_fn)?;
@@ -488,12 +557,12 @@ impl<SC:Clone+std::fmt::Debug> Environment<SC> {
                     self.preprocess_expr(&mut condition)?;
 
                     let (reg,tv) = self.compile_expr(condition,instr, None)?;
-                    instr.push(MkOrInstr::Instr(Instr::JumpUnless{index:self.get_scope_name().clone()+".ELSE",condition:reg}));
+                    instr.push(MkOrInstr::Instr(Instr::JumpUnless{index:self.get_scope_name().clone()+".ELSE",condition:reg},self.imeta()));
                     self.release_tmp(tv);
 
                     self.compile_statements(vec![*yes],instr,instr_fn)?;
 
-                    instr.push(MkOrInstr::Instr(Instr::Jump{index:self.get_scope_name().clone()+".END"}));
+                    instr.push(MkOrInstr::Instr(Instr::Jump{index:self.get_scope_name().clone()+".END"},self.imeta()));
                     instr.push(MkOrInstr::Marker(self.get_scope_name().clone()+".ELSE"));
 
                     self.compile_statements(vec![*no],instr,instr_fn)?;
@@ -516,11 +585,11 @@ impl<SC:Clone+std::fmt::Debug> Environment<SC> {
                     self.preprocess_expr(&mut condition)?;
 
                     let (reg,tv) = self.compile_expr(condition,instr,None)?;
-                    instr.push(MkOrInstr::Instr(Instr::JumpUnless{index:self.get_scope_name().clone()+".END",condition:reg}));
+                    instr.push(MkOrInstr::Instr(Instr::JumpUnless{index:self.get_scope_name().clone()+".END",condition:reg},self.imeta()));
                     self.release_tmp(tv);
 
                     self.compile_statements(vec![*code],instr,instr_fn)?;
-                    instr.push(MkOrInstr::Instr(Instr::Jump{index:self.get_scope_name().clone()+".START"}));
+                    instr.push(MkOrInstr::Instr(Instr::Jump{index:self.get_scope_name().clone()+".START"},self.imeta()));
                     
                     instr.push(MkOrInstr::Marker(self.get_scope_name().clone()+".END"));
                     
@@ -537,7 +606,7 @@ impl<SC:Clone+std::fmt::Debug> Environment<SC> {
                     instr.push(MkOrInstr::Marker(self.get_scope_name().clone()+".START"));
 
                     self.compile_statements(vec![*code],instr,instr_fn)?;
-                    instr.push(MkOrInstr::Instr(Instr::Jump{index:self.get_scope_name().clone()+".START"}));
+                    instr.push(MkOrInstr::Instr(Instr::Jump{index:self.get_scope_name().clone()+".START"},self.imeta()));
 
                     instr.push(MkOrInstr::Marker(self.get_scope_name().clone()+".END"));
                     self.pop_scope();
@@ -548,7 +617,7 @@ impl<SC:Clone+std::fmt::Debug> Environment<SC> {
                     // jumpt to END of scope (i.e. exactly afterwards)
                     let loop_scope = self.find_scope_variant(&[ScopeVariant::While,ScopeVariant::Loop]);
                     if let Some(loop_scope)=loop_scope {
-                        instr.push(MkOrInstr::Instr(Instr::Jump{index:loop_scope.name.clone()+".END"}));
+                        instr.push(MkOrInstr::Instr(Instr::Jump{index:loop_scope.name.clone()+".END"},self.imeta()));
                     } else {
                         return Err(format!("Break statement outside of loop in scope {}",self.get_scope_name()))
                     }
@@ -560,7 +629,7 @@ impl<SC:Clone+std::fmt::Debug> Environment<SC> {
                     // while: jump to before computation of condition
                     let loop_scope = self.find_scope_variant(&[ScopeVariant::While,ScopeVariant::Loop]);
                     if let Some(loop_scope)=loop_scope {
-                        instr.push(MkOrInstr::Instr(Instr::Jump{index:loop_scope.name.clone()+".START"}));
+                        instr.push(MkOrInstr::Instr(Instr::Jump{index:loop_scope.name.clone()+".START"},self.imeta()));
                     } else {
                         return Err(format!("Continue statement outside of loop in scope {}",self.get_scope_name()))
                     }
@@ -578,7 +647,7 @@ impl<SC:Clone+std::fmt::Debug> Environment<SC> {
 
                     let (reg,tv) = self.compile_expr(value,instr,None)?;
                     self.release_tmp(tv);
-                    instr.push(MkOrInstr::Instr(Instr::Return{stack:fn_name,value:reg}));
+                    instr.push(MkOrInstr::Instr(Instr::Return{stack:fn_name,value:reg},self.imeta()));
                 }
 
                 Statement::Expr(mut expr) => {
@@ -627,29 +696,54 @@ impl<SC:Clone+std::fmt::Debug> Environment<SC> {
                     self.create_fn_scope(name);
                     instr_fn.push(MkOrInstr::Marker(self.get_scope_name().clone()+".START"));
 
-                    let scope = self.scopes.last_mut().unwrap();
+                    // let scope = ;
                     // add params
                     for param in params.into_iter() {
                         match param.variant {
-                            FnParamVariant::Value =>
-                                scope.insert_ident(
+                            FnParamVariant::Value => {
+                                let pos:i32 = -(self.scopes.last().unwrap().stack_vars as i32);
+                                self.meta.scopes.get_mut(&self.scopes.last().unwrap().name).unwrap().variables.push(VarMeta{
+                                    pos: pos,
+                                    name: param.name.clone(),
+                                    r#type: None,
+                                    variant: VarMetaVariant::Val,
+                                });
+                                self.insert_ident(
                                     param.name,
                                     IdentifierVariant::Variable{
-                                        reg:Reg::Var(StackRef::Rel(-(scope.stack_vars as i32))),
-                                        r#type:None}).unwrap(),
-                            FnParamVariant::Reference =>
-                                scope.insert_ident(
+                                        reg:Reg::Var(StackRef::Rel(pos)),
+                                        r#type:None}).unwrap()
+                            }
+                            FnParamVariant::Reference => {
+                                let pos:i32 = -(self.scopes.last().unwrap().stack_vars as i32);
+                                self.meta.scopes.get_mut(&self.scopes.last().unwrap().name).unwrap().variables.push(VarMeta{
+                                    pos: pos,
+                                    name: param.name.clone(),
+                                    r#type: None,
+                                    variant: VarMetaVariant::Ref,
+                                });
+                                self.insert_ident(
                                     param.name,
                                     IdentifierVariant::Variable{
-                                        reg:Reg::VarRef(StackRef::Rel(-(scope.stack_vars as i32))),
-                                        r#type:None}).unwrap(),
-                            FnParamVariant::Array =>
-                                scope.insert_ident(
+                                        reg:Reg::VarRef(StackRef::Rel(pos)),
+                                        r#type:None}).unwrap()
+                            }
+                            FnParamVariant::Array => {
+                                let pos:i32 = -(self.scopes.last().unwrap().stack_vars as i32);
+                                self.meta.scopes.get_mut(&self.scopes.last().unwrap().name).unwrap().variables.push(VarMeta{
+                                    pos: pos,
+                                    name: param.name.clone(),
+                                    r#type: None,
+                                    variant: VarMetaVariant::ArrayRef,
+                                });
+                                self.insert_ident(
                                     param.name,
                                     IdentifierVariant::Array{
-                                        reg:ArrayReg::ArrayRef(StackRef::Rel(-(scope.stack_vars as i32))),
-                                        r#type:None}).unwrap(),
+                                        reg:ArrayReg::ArrayRef(StackRef::Rel(pos)),
+                                        r#type:None}).unwrap()
+                            }
                         }
+                        let scope = self.scopes.last_mut().unwrap();
                         scope.stack_vars+=1;
                         scope.stack_max+=1;
                     }
@@ -673,10 +767,10 @@ impl<SC:Clone+std::fmt::Debug> Environment<SC> {
         // if this is a function, and if it does not already end on a return statement, and it is not the global scope, add a return statement
         if matches!(self.scopes.last().unwrap().variant,ScopeVariant::Function{..}) && !self.scopes.last().unwrap().global{
             if !matches!(
-                instr.iter().rev().filter(|mki| matches!(mki,MkOrInstr::Instr(_))).next(),
-                Some(MkOrInstr::Instr(Instr::Return{..}))
+                instr.iter().rev().filter(|mki| matches!(mki,MkOrInstr::Instr(_,_))).next(),
+                Some(MkOrInstr::Instr(Instr::Return{..},..))
             ) { //last instr (not marker!) is not a Return statement
-                instr.push(MkOrInstr::Instr(Instr::Return{stack:self.get_scope_name().clone(),value:Reg::Const(0)}));
+                instr.push(MkOrInstr::Instr(Instr::Return{stack:self.get_scope_name().clone(),value:Reg::Const(0)},self.imeta()));
             }
         }
 
@@ -834,7 +928,7 @@ impl<SC:Clone+std::fmt::Debug> Environment<SC> {
         Ok(match expr {
             Expr::Num(x) => {
                 if let Some(r)=dest {
-                    instr.push(MkOrInstr::Instr(Instr::UnaryOperator{op:UnaryOperator::Nop,rhs:Reg::Const(x),res:r}));
+                    instr.push(MkOrInstr::Instr(Instr::UnaryOperator{op:UnaryOperator::Nop,rhs:Reg::Const(x),res:r},self.imeta()));
                     (r,None) // store constant in reg
                 } else {
                     (Reg::Const(x),None) //just return the constant
@@ -848,7 +942,7 @@ impl<SC:Clone+std::fmt::Debug> Environment<SC> {
                 };
 
                 if let Some(d)=dest {
-                    instr.push(MkOrInstr::Instr(Instr::UnaryOperator{op:UnaryOperator::Nop,rhs:var,res:d})); // store variable
+                    instr.push(MkOrInstr::Instr(Instr::UnaryOperator{op:UnaryOperator::Nop,rhs:var,res:d},self.imeta())); // store variable
                     (d,None)
                 } else {
                     (var,None) // just return variable
@@ -862,7 +956,7 @@ impl<SC:Clone+std::fmt::Debug> Environment<SC> {
                 
                 let (reg,tv) = get_reg(self,dest);
 
-                instr.push(MkOrInstr::Instr(Instr::BinaryOperator{op,lhs:reg_lhs,rhs:reg_rhs,res:reg}));
+                instr.push(MkOrInstr::Instr(Instr::BinaryOperator{op,lhs:reg_lhs,rhs:reg_rhs,res:reg},self.imeta()));
                 (reg,tv)
             },
             Expr::Unary{op,rhs} => {
@@ -871,7 +965,7 @@ impl<SC:Clone+std::fmt::Debug> Environment<SC> {
                 
                 let (reg,tv) = get_reg(self,dest);
             
-                instr.push(MkOrInstr::Instr(Instr::UnaryOperator{op,rhs:reg_rhs,res:reg}));
+                instr.push(MkOrInstr::Instr(Instr::UnaryOperator{op,rhs:reg_rhs,res:reg},self.imeta()));
                 (reg,tv)
             },
             Expr::ArrayIndex{name,index} => {
@@ -886,7 +980,7 @@ impl<SC:Clone+std::fmt::Debug> Environment<SC> {
                     _ => unreachable!(),
                 };
             
-                instr.push(MkOrInstr::Instr(Instr::ArrayIndex{array:array,index:reg_index,res:reg}));
+                instr.push(MkOrInstr::Instr(Instr::ArrayIndex{array:array,index:reg_index,res:reg},self.imeta()));
                 (reg,tv)
             },
             Expr::FnCall{name,args} => {
@@ -945,7 +1039,12 @@ impl<SC:Clone+std::fmt::Debug> Environment<SC> {
                         for tv in tmp_vars.into_iter().rev() {self.release_tmp(tv);}
                         
                         let (reg,tv) = get_reg(self,dest);
-                        instr.push(MkOrInstr::Instr(Instr::FnCall { index: fnid.name.clone()+".START", params, res: reg, stack: fnid.name.clone() }));
+                        instr.push(MkOrInstr::Instr(Instr::FnCall {
+                            index: fnid.name.clone()+".START",
+                            params,
+                            res: reg,
+                            stack: fnid.name.clone()
+                        },self.imeta()));
                         (reg,tv)
                     },
                     Identifier{variant:IdentifierVariant::SysCall {  call,.. },..} => {
@@ -969,7 +1068,7 @@ impl<SC:Clone+std::fmt::Debug> Environment<SC> {
                         for tv in tmp_vars.into_iter().rev() { self.release_tmp(tv);}
 
                         let (reg,tv) = get_reg(self,dest);
-                        instr.push(MkOrInstr::Instr(Instr::SystemCall {params, res:reg, call:call.clone()}));
+                        instr.push(MkOrInstr::Instr(Instr::SystemCall {params, res:reg, call:call.clone()},self.imeta()));
 
                         (reg,tv)
                     }
@@ -1029,12 +1128,26 @@ impl<SC:Clone+std::fmt::Debug> Environment<SC> {
     /// Create a subscope (not for functions)
     fn create_subscope(&mut self,name: String, variant:ScopeVariant) {
         let scope = self.scopes.last().unwrap().create_subscope(name,variant);
+        self.meta.scopes.insert(
+            scope.name.clone(),
+            ScopeMeta {
+                variant: ScopeMetaVariant::Sub(self.scopes.last().unwrap().name.clone()),
+                variables: vec![],
+            }
+        );
         self.scopes.push(scope);
     }
 
     /// Create a function subscope
     fn create_fn_scope(&mut self,name: String) {
         let scope = self.scopes.last().unwrap().create_fn_scope(name);
+        self.meta.scopes.insert(
+            scope.name.clone(),
+            ScopeMeta {
+                variant: ScopeMetaVariant::Function(0),
+                variables: vec![],
+            }
+        );
         self.scopes.push(scope);
     }
 
@@ -1042,6 +1155,9 @@ impl<SC:Clone+std::fmt::Debug> Environment<SC> {
     fn pop_scope(&mut self,) {
         let scope = self.scopes.pop().unwrap();
         assert!(scope.tmp_vars.len()==scope.stack_tmp,"Attempt to close scope before all temp vars are released");
+        if let ScopeMetaVariant::Function(size) = &mut self.meta.scopes.get_mut(&scope.name).unwrap().variant {
+            *size = scope.stack_max;
+        }
         self.scopes.last_mut().unwrap().absorb_subscope(scope);
     }
 
@@ -1111,7 +1227,8 @@ impl<SC:Clone+std::fmt::Debug> Environment<SC> {
         Self {
             scopes: Vec::new(),
             fn_sizes: HashMap::new(),
-            global_size: 0
+            global_size: 0,
+            meta: ProgramMeta{scopes: HashMap::new(), instr: vec![]}
         }
     }
     /// Create base scope from scratch, with no variables
@@ -1125,31 +1242,48 @@ impl<SC:Clone+std::fmt::Debug> Environment<SC> {
         self
     }
     /// Compile statements into instructions; this also adds the root scope
-    pub fn compile(&mut self, program:Vec<Statement>) -> Result<Vec<Instr<usize,usize,SC>>,CompileError> {
+    pub fn compile(mut self, program:Vec<Statement>) -> Result<(Vec<Instr<usize,usize,SC>>,ProgramMeta),CompileError> {
+        // Create instructions
+        let mut instr = Vec::new();
+        let mut functions = Vec::new();
+        instr.push(MkOrInstr::Instr(
+            Instr::Init{index:"@root.START".to_string(),stack:"@root".to_string()},
+            InstrMeta{ scope: "@init".to_string(), tmp_vars: vec![] }
+        ));
+        self.meta.scopes.insert("@init".to_string(),ScopeMeta{ //specifically for first instruction, when the mepty stack functions as a single program counter
+            variant: ScopeMetaVariant::Function(1),
+            variables: vec![]
+        });
+
 
         // First, set up root scope
         let mut root = Scope::new_base_scope("@root".to_string());
         root.stack_vars=1; // allocate main PC
         root.stack_max=1;
         self.scopes.push(root);
+        self.meta.scopes.insert("@root".to_string(),ScopeMeta{
+            variant: ScopeMetaVariant::Function(0),
+            variables: vec![]
+        });
         
         
-        // Create instructions
-        let mut instr = Vec::new();
-        let mut functions = Vec::new();
+
 
         debug!("C: initial instructions");
-        instr.push(MkOrInstr::Instr(Instr::Init{index:"@root.START".to_string(),stack:"@root".to_string()}));
         instr.push(MkOrInstr::Marker("@root.START".to_string()));
     
         // Recursively move through statements
         debug!("C: recusive compile");
         self.compile_statements(program,&mut instr,&mut functions)?;
         self.fn_sizes.insert("@root".to_string(),self.scopes.last().unwrap().stack_max);
-    
+        if let ScopeMetaVariant::Function(size)= &mut self.meta.scopes.get_mut(&self.scopes.last().unwrap().name).unwrap().variant {
+            *size = self.scopes.last().unwrap().stack_max;
+        }
+
+
         // Add JUMP to start of program (i.e. loop)
         debug!("C: add jump to start and functions");
-        instr.push(MkOrInstr::Instr(Instr::Jump{index:"@root.START".to_string()}));
+        instr.push(MkOrInstr::Instr(Instr::Jump{index:"@root.START".to_string()},self.imeta()));
     
         // Add functions
         instr.append(&mut functions);
@@ -1163,7 +1297,7 @@ impl<SC:Clone+std::fmt::Debug> Environment<SC> {
         for mk_instr in instr.iter() {
             match mk_instr {
                 MkOrInstr::Marker(m) => {markers.insert(m.clone(),i);}
-                MkOrInstr::Instr(_) => {i+=1;}
+                MkOrInstr::Instr(_,_) => {i+=1;}
             }
         }
         
@@ -1173,14 +1307,19 @@ impl<SC:Clone+std::fmt::Debug> Environment<SC> {
         // Create final code, without markers, and with valid jump values, and with shifted ABS values and correct stack sizes
         debug!("C: replace markers, stack sizes and offset absolute stack relations");
         
-        Ok(instr
+        Ok((instr
             .into_iter()
             .filter_map(|mki|
                 match mki {
                     MkOrInstr::Marker(_) => None,
-                    MkOrInstr::Instr(i) => Some(self.postprocess_instr(i,&markers,self.global_size as i32-1)),
+                    MkOrInstr::Instr(i,meta) => {
+                        self.meta.instr.push(meta);
+                        Some(self.postprocess_instr(i,&markers,self.global_size as i32-1))
+                    }
                 })
-            .collect())
+            .collect(),
+            self.meta
+        ))
     }
     
     
