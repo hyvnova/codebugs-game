@@ -61,7 +61,7 @@ impl<SC:Clone> CPU<SC> {
             Instr::Jump { index } =>
                 self.memory[self.sp]=*index as i32,
             Instr::JumpUnless { index, condition } =>
-                if self.get_val(condition)!=0 {self.memory[self.sp]=*index as i32},
+                if self.get_val(condition)==0 {self.memory[self.sp]=*index as i32},
             Instr::FnCall { index, params, res, stack } => {
                 let values: Vec<i32> = params.iter().map(|fnarg| match fnarg {
                     FnArg::ArrayRef(ar) => self.get_array_ref(ar),

@@ -35,20 +35,26 @@ fn main() {
 
     let mut cpu = CPU::<SC>::new(60);
 
+    let mut i = 0;
     loop {
+        i+=1;
         // println!("PC {}\tSP {}\tMEM {:?}\n{:?}\n",cpu.cpu.memory[cpu.cpu.sp],cpu.cpu.sp,cpu.cpu.memory,instr[cpu.cpu.memory[cpu.cpu.sp] as usize]);
-        display_stack(&cpu,&meta);
-        
-//        println!("\n");
-        println!("\n{:?}\n{:?}\n",instr[cpu.cpu.memory[cpu.cpu.sp] as usize],meta.instr[cpu.cpu.memory[cpu.cpu.sp] as usize]);
-
+        // if i%40==0 {
+        //     display_stack(&cpu,&meta);
+        // //}
+        //     println!("\n{:?}\n{:?}\n",instr[cpu.cpu.memory[cpu.cpu.sp] as usize],meta.instr[cpu.cpu.memory[cpu.cpu.sp] as usize]);
+        // }
 
         match cpu.execute(&instr) {
-            Ok(Some(sc)) => println!("SYSCALL: {:?}",sc),
+            Ok(Some((sc,args,_res))) => {
+                match sc {
+                    SC::Print => println!("PRINT {}",cpu.get(args[0].num())),
+                }
+            }//println!("SYSCALL: {:?}",sc),
             Ok(None) => {}
             Err(e) => println!("ERROR: {:?}",e),
         }
-        std::thread::sleep(std::time::Duration::from_millis(3000));
+        // std::thread::sleep(std::time::Duration::from_millis(50));
     }
 
 }
@@ -56,22 +62,36 @@ fn main() {
 fn display_stack<SC:std::fmt::Debug + Clone>(cpu:&CPU<SC>,meta:&ProgramMeta) {
     let data = cpu.cpu.annotate_stack(meta);
     println!("==================== STACK ====================");
-    println!("ADDRESS\tNAME\tTYPE\tVALUE");
-    for i in 0..data.len() {
-        println!("\x1B[{}m{i:#06X}\t{}\t{}\t{}\x1B[m",
-            match data[i].variant {
-                MemMetaVariant::PC          => "93", // yellow
-                MemMetaVariant::Result      => "38;5;130", // orange
-                MemMetaVariant::Var         => "97", // white
-                MemMetaVariant::VarRef      => "95", // magenta
-                MemMetaVariant::Array       => "92", // green
-                MemMetaVariant::ArrayRef    => "96", // cyan
-                MemMetaVariant::TMP         => "38;5;19", // dark blue
-                MemMetaVariant::Unused      => "38;5;236", // dark gray
-            },
-            data[i].name,
-            data[i].r#type.as_ref().map(|s|s.as_str()).unwrap_or_else(|| "-"),
-            data[i].value
+    // println!("ADDRESS\tNAME\tTYPE\tVALUE");
+
+    for _ in 0..3 {
+        print!("ADDRESS {:>16} {:>10} {:>10}\t",
+            "NAME",
+            "TYPE",
+            "VALUE",
         );
+    }
+    println!();
+    for r in 0..((data.len()+2)/3) {
+        for c in 0..3 {
+            let i = r+((data.len()+2)/3)*c;
+            if i>=data.len() {break;}
+            print!("\x1B[{}m{i:#06X}\t{:>16} {:>10} {:>10}\x1B[m\t",
+                match data[i].variant {
+                    MemMetaVariant::PC          => "93", // yellow
+                    MemMetaVariant::Result      => "38;5;130", // orange
+                    MemMetaVariant::Var         => "97", // white
+                    MemMetaVariant::VarRef      => "95", // magenta
+                    MemMetaVariant::Array       => "92", // green
+                    MemMetaVariant::ArrayRef    => "96", // cyan
+                    MemMetaVariant::TMP         => "38;5;19", // dark blue
+                    MemMetaVariant::Unused      => "38;5;236", // dark gray
+                },
+                data[i].name,
+                data[i].r#type.as_ref().map(|s|s.as_str()).unwrap_or_else(|| "-"),
+                data[i].value
+            );
+        }
+        println!();
     }
 }

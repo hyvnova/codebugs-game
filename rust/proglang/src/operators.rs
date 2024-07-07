@@ -24,7 +24,7 @@ impl BinaryOperator {
     pub fn eval(&self,x:i32,y:i32) -> Result<i32,Error> {
         Ok(match self {
             BO::Add =>      x.wrapping_add(y),
-            BO::Sub =>      y.wrapping_sub(y),
+            BO::Sub =>      x.wrapping_sub(y),
             BO::Mul =>      x.wrapping_mul(y),
             BO::Div =>      if y!=0 {x.wrapping_div(y)} else {return Err("Zero division".to_string())},
             BO::Mod =>      if y!=0 {x.wrapping_rem_euclid(y)} else {return Err("Zero division".to_string())},

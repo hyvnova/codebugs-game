@@ -12,11 +12,12 @@ enum Char = {
 const PROG_LEN = 40;
 const MEM_SIZE = 4;
 
-array prog[PROG_LEN];
-array mem[MEM_SIZE];
-
 var pc;
 var mc;
+array mem[MEM_SIZE];
+array prog[PROG_LEN]:Char;
+
+
 
 pc = 0;
 mc = 0;
@@ -77,40 +78,43 @@ prog[39]=93;
 // }
 
 
-loop {
-    var instr;
+loop exec(pc,mc);
+
+fn exec(&pc,&mc) {
+    var instr:Char;
     instr = prog[pc];
-    if instr == Char::Plus {
+    if (instr == Char::Plus) {
         mem[mc]=(mem[mc]+1)&255;
-    } else if instr == Char::Minus {
+    } else if (instr == Char::Minus) {
         mem[mc]=(mem[mc]-1)&255;
-    } else if instr == Char::Greater {
+    } else if (instr == Char::Greater) {
         mc=mc+1;
-    } else if instr == Char::Less {
+    } else if (instr == Char::Less) {
         mc=mc-1;
-    } else if instr == Char::Comma {
+    } else if (instr == Char::Comma) {
         // mem[mc]=read_char();
-    } else if instr == Char::Period {
+        print(mem[mc]);
+    } else if (instr == Char::Period) {
         // print_char(mem[mc]);
         print(mem[mc]);
-    } else if instr == Char::BracketOpen {
-        if mem[mc]==0 {
+    } else if (instr == Char::BracketOpen) {
+        if (mem[mc]==0) {
             var stack;
-            stack=0;
-            while stack!=0 || prog[pc] != Char::BracketClose {
-                if prog[pc]==Char::BracketOpen  stack=stack+1;
-                if prog[pc]==Char::BracketClose stack=stack-1;
+            stack=-1;
+            while (stack!=0 || prog[pc] != Char::BracketClose) {
+                if (prog[pc]==Char::BracketOpen ) stack=stack+1;
+                if (prog[pc]==Char::BracketClose) stack=stack-1;
                 pc=pc+1;
             }
             // ends at bracket; +1 later skips the bracket again
         }
-    } else if instr == Char::BracketClose {
-        if mem[mc]!=0 {
+    } else if (instr == Char::BracketClose) {
+        if (mem[mc]!=0) {
             var stack;
-            stack=0;
-            while stack!=0 || prog[pc] != Char::BracketOpen {
-                if prog[pc]==Char::BracketOpen  stack=stack-1;
-                if prog[pc]==Char::BracketClose stack=stack+1;
+            stack=-1;
+            while (stack!=0 || prog[pc] != Char::BracketOpen) {
+                if (prog[pc]==Char::BracketOpen ) stack=stack-1;
+                if (prog[pc]==Char::BracketClose) stack=stack+1;
                 pc=pc-1;
             }
             // ends at bracket; +1 later skips the bracket again

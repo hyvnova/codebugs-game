@@ -1140,9 +1140,12 @@ impl<I: Clone, O, U, A: Parser<I, O, Error = E>, B: Parser<I, U, Error = E>, E: 
         let mut delims = Vec::new();
         let mut errors = Vec::new();
         let mut alt = None;
+        let mut leading_delim = 0;
 
         if self.allow_leading {
             alt = parse_or_not(&self.delimiter, stream, debugger, &mut delims, alt);
+            //todo!("Leading for separated_by_save is not implemented yet");
+            if alt.is_some() {leading_delim=1;}
         }
 
         let (mut state, mut alt) =
@@ -1184,6 +1187,9 @@ impl<I: Clone, O, U, A: Parser<I, O, Error = E>, B: Parser<I, U, Error = E>, E: 
                     state = State::Terminated(d_err);
                 }
             }
+        }
+        if delims.len()>=outputs.len()+leading_delim { //if no new item was found, pop last delimiter
+            delims.pop();
         }
         stream.revert(offset);
 

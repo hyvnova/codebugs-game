@@ -1,5 +1,7 @@
 /* TODO:
 
+- move additional return statement from end of compile_statements to end of function compilation
+- change function call syntax so that pass-by-reference requires an &, and arrays require []
 - disallow variable reading before value has been set (global vars are difficult)
 - array declaration might fail if the first definition in a scope is an array with size 0? probably not
 - a way to track stack meaning for debugging: keep list of scopes, their parent scopes, where the variables are at and, for functions, their total stack size
@@ -578,7 +580,7 @@ impl<SC:Clone+std::fmt::Debug> Environment<SC> {
                     // add JUMP to START of while scope
                     // register scope data
                     // pop scope
-                    self.create_subscope(format!("{}",cnt_while),ScopeVariant::Loop);
+                    self.create_subscope(format!("{}",cnt_while),ScopeVariant::While);
                     cnt_while+=1;
                     instr.push(MkOrInstr::Marker(self.get_scope_name().clone()+".START"));
 
@@ -1110,9 +1112,9 @@ impl<SC:Clone+std::fmt::Debug> Environment<SC> {
 
             //i => i as Instr<usize>,
             Instr::ArrayAssign { array, index, value } =>
-                Instr::ArrayAssign { array, index:index.absshift(absshift), value:value.absshift(absshift) },
+                Instr::ArrayAssign { array:array.absshift(absshift), index:index.absshift(absshift), value:value.absshift(absshift) },
             Instr::ArrayIndex { array, index, res } =>
-                Instr::ArrayIndex { array, index:index.absshift(absshift), res:res.absshift(absshift) },
+                Instr::ArrayIndex { array:array.absshift(absshift), index:index.absshift(absshift), res:res.absshift(absshift) },
             Instr::BinaryOperator { op, lhs, rhs, res } =>
                 Instr::BinaryOperator { op, lhs:lhs.absshift(absshift), rhs:rhs.absshift(absshift), res:res.absshift(absshift) },
             Instr::UnaryOperator { op, rhs, res } =>
